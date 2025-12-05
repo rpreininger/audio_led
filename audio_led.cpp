@@ -800,13 +800,111 @@ void effect_colorwipe(FrameCanvas *c, float t, int br) {
     }
 }
 
+// ---------------------- Spectrum 3D Waterfall ------------------------
+void effect_spectrum3d(FrameCanvas *c, float t, int br) {
+    static const int HISTORY_DEPTH = 48;  // Number of history lines
+    static float history[HISTORY_DEPTH][8] = {0};  // Store spectrum history
+    static int frameCount = 0;
+
+    // Get current spectrum
+    float currentSpec[8];
+    {
+        std::lock_guard<std::mutex> lock(audio.specMutex);
+        for (int i = 0; i < 8; i++) {
+            currentSpec[i] = audio.spectrum[i];
+        }
+    }
+
+    float threshold = settings.noiseThreshold.load();
+
+    // Shift history back every few frames for slower movement
+    frameCount++;
+    if (frameCount >= 3) {
+        frameCount = 0;
+        for (int d = HISTORY_DEPTH - 1; d > 0; d--) {
+            for (int b = 0; b < 8; b++) {
+                history[d][b] = history[d-1][b];
+            }
+        }
+        // Add new spectrum line at front
+        for (int b = 0; b < 8; b++) {
+            float val = currentSpec[b];
+            if (val < threshold) val = 0;
+            history[0][b] = val;
+        }
+    }
+
+    // Clear screen
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            c->SetPixel(x, y, 0, 0, 0);
+        }
+    }
+
+    // Draw 3D perspective waterfall
+    // Front is at bottom, back recedes diagonally up and to the right
+    for (int d = HISTORY_DEPTH - 1; d >= 0; d--) {
+        // Calculate perspective offset
+        float depthRatio = (float)d / HISTORY_DEPTH;
+        int yOffset = (int)(depthRatio * 40);  // Move up as depth increases
+        int xOffset = (int)(depthRatio * 30);  // Move right as depth increases
+        float scale = 1.0f - depthRatio * 0.6f;  // Shrink with depth
+        float fade = 1.0f - depthRatio * 0.7f;   // Fade with depth
+
+        int barWidth = (int)((WIDTH - 40) / 8 * scale);
+        if (barWidth < 2) barWidth = 2;
+
+        for (int b = 0; b < 8; b++) {
+            float val = history[d][b];
+            int h = (int)(val * 0.6f * scale);
+            if (h > (int)(HEIGHT * scale * 0.8f)) h = (int)(HEIGHT * scale * 0.8f);
+            if (h < 1 && val > 0) h = 1;
+
+            // Calculate bar position with perspective
+            int baseX = 10 + b * (WIDTH - 40) / 8 + xOffset;
+            int baseY = HEIGHT - 5 - yOffset;
+
+            // Color based on frequency band with depth fade
+            int r, g, bb;
+            switch(b) {
+                case 0: r = 255; g = 0;   bb = 0;   break;  // red
+                case 1: r = 255; g = 128; bb = 0;   break;  // orange
+                case 2: r = 255; g = 255; bb = 0;   break;  // yellow
+                case 3: r = 0;   g = 255; bb = 0;   break;  // green
+                case 4: r = 0;   g = 255; bb = 255; break;  // cyan
+                case 5: r = 0;   g = 0;   bb = 255; break;  // blue
+                case 6: r = 128; g = 0;   bb = 255; break;  // purple
+                case 7: r = 255; g = 0;   bb = 255; break;  // magenta
+            }
+
+            // Apply brightness and depth fade
+            r = (int)(r * fade * br / 255);
+            g = (int)(g * fade * br / 255);
+            bb = (int)(bb * fade * br / 255);
+
+            // Draw bar
+            for (int dy = 0; dy < h; dy++) {
+                int py = baseY - dy;
+                if (py >= 0 && py < HEIGHT) {
+                    for (int dx = 0; dx < barWidth - 1; dx++) {
+                        int px = baseX + dx;
+                        if (px >= 0 && px < WIDTH) {
+                            c->SetPixel(px, py, r, g, bb);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ====================================================================
 // EFFECT DISPATCHER
 // ====================================================================
 int autoEffect(float t) {
     int duration = settings.effectDuration.load();
     if (duration < 1) duration = 1;
-    return ((int)(t / duration)) % 12; // 12 effects now
+    return ((int)(t / duration)) % 13; // 13 effects now
 }
 
 void renderEffect(int id, FrameCanvas *c, float t, int br) {
@@ -823,6 +921,7 @@ void renderEffect(int id, FrameCanvas *c, float t, int br) {
         case 9: effect_wave(c, t, br); break;
         case 10: effect_colorpulse(c, t, br); break;
         case 11: effect_colorwipe(c, t, br); break;
+        case 12: effect_spectrum3d(c, t, br); break;
     }
 }
 
@@ -867,6 +966,7 @@ const char* HTML_PAGE = R"HTMLPAGE(
             <option value="9">Waveform</option>
             <option value="10">Color Pulse</option>
             <option value="11">Color Wipe</option>
+            <option value="12">Spectrum 3D</option>
         </select>
     </div>
 
@@ -1082,7 +1182,7 @@ int main() {
         // Choose effect
         int id;
         bool loopEnabled = settings.autoLoop.load();
-        if (manualEffect >= 0 && manualEffect <= 11) {
+        if (manualEffect >= 0 && manualEffect <= 12) {
             // Manual effect selected - use it directly
             id = manualEffect;
         } else if (loopEnabled) {
