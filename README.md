@@ -30,15 +30,25 @@ make clean
 make
 ```
 
-## ALSA Audio Configuration
+## ALSA Audio Configuration (IMPORTANT)
 
-The audio device must be accessible when running as root (sudo). Create `/etc/asound.conf`:
+The audio device must be accessible when running as root (sudo). **This is critical** - without this configuration, you will get "Cannot get card index" errors.
+
+### Step 1: Find your audio device
+
+```bash
+arecord -l
+```
+
+Note the card number (e.g., `card 0: Device`).
+
+### Step 2: Create ALSA config
 
 ```bash
 sudo nano /etc/asound.conf
 ```
 
-Add the following content:
+Add the following content (adjust `hw:0,0` if your card number differs):
 
 ```
 pcm.!default {
@@ -52,12 +62,19 @@ ctl.!default {
 }
 ```
 
-Verify your audio device with:
+### Step 3: Set permissions
+
 ```bash
-arecord -l
+sudo chmod 644 /etc/asound.conf
 ```
 
-If your device is on a different card number, adjust `hw:0,0` accordingly.
+### Step 4: Add user to audio group (optional but recommended)
+
+```bash
+sudo usermod -a -G audio $USER
+```
+
+Reboot after these changes for them to take effect.
 
 ## Running
 
