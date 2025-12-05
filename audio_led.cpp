@@ -802,7 +802,7 @@ void effect_colorwipe(FrameCanvas *c, float t, int br) {
 
 // ---------------------- Spectrum 3D Waterfall ------------------------
 void effect_spectrum3d(FrameCanvas *c, float t, int br) {
-    static const int HISTORY_DEPTH = 48;  // Number of history lines
+    static const int HISTORY_DEPTH = 32;  // Number of history lines
     static float history[HISTORY_DEPTH][8] = {0};  // Store spectrum history
     static int frameCount = 0;
 
@@ -819,7 +819,7 @@ void effect_spectrum3d(FrameCanvas *c, float t, int br) {
 
     // Shift history back every few frames for slower movement
     frameCount++;
-    if (frameCount >= 3) {
+    if (frameCount >= 4) {
         frameCount = 0;
         for (int d = HISTORY_DEPTH - 1; d > 0; d--) {
             for (int b = 0; b < 8; b++) {
@@ -841,40 +841,54 @@ void effect_spectrum3d(FrameCanvas *c, float t, int br) {
         }
     }
 
-    // Draw 3D perspective waterfall
-    // Front is at bottom, back recedes diagonally up and to the right
+    // Draw 3D perspective lines - back to front so front overwrites
     for (int d = HISTORY_DEPTH - 1; d >= 0; d--) {
-        // Calculate perspective offset
         float depthRatio = (float)d / HISTORY_DEPTH;
-        int yOffset = (int)(depthRatio * 40);  // Move up as depth increases
-        int xOffset = (int)(depthRatio * 30);  // Move right as depth increases
-        float scale = 1.0f - depthRatio * 0.6f;  // Shrink with depth
-        float fade = 1.0f - depthRatio * 0.7f;   // Fade with depth
 
-        int barWidth = (int)((WIDTH - 40) / 8 * scale);
-        if (barWidth < 2) barWidth = 2;
+        // Perspective: lines move up and shrink horizontally as they go back
+        int baseY = HEIGHT - 8 - (int)(depthRatio * 50);  // Move up with depth
+        float xScale = 1.0f - depthRatio * 0.5f;  // Shrink width with depth
+        int xCenter = WIDTH / 2 + (int)(depthRatio * 20);  // Shift right slightly
+        float fade = 1.0f - depthRatio * 0.8f;  // Fade with depth
 
-        for (int b = 0; b < 8; b++) {
-            float val = history[d][b];
-            int h = (int)(val * 0.6f * scale);
-            if (h > (int)(HEIGHT * scale * 0.8f)) h = (int)(HEIGHT * scale * 0.8f);
-            if (h < 1 && val > 0) h = 1;
+        if (baseY < 2) continue;
 
-            // Calculate bar position with perspective
-            int baseX = 10 + b * (WIDTH - 40) / 8 + xOffset;
-            int baseY = HEIGHT - 5 - yOffset;
+        // Calculate line width at this depth
+        int lineWidth = (int)(WIDTH * 0.8f * xScale);
+        int startX = xCenter - lineWidth / 2;
 
-            // Color based on frequency band with depth fade
+        // Draw horizontal line with height based on spectrum values
+        for (int x = 0; x < lineWidth; x++) {
+            int px = startX + x;
+            if (px < 0 || px >= WIDTH) continue;
+
+            // Map x position to spectrum band (interpolate between bands)
+            float bandPos = (float)x / lineWidth * 7.0f;
+            int band1 = (int)bandPos;
+            int band2 = band1 + 1;
+            if (band2 > 7) band2 = 7;
+            float frac = bandPos - band1;
+
+            // Interpolate between adjacent bands
+            float val = history[d][band1] * (1.0f - frac) + history[d][band2] * frac;
+            int h = (int)(val * 0.4f);
+            if (h > 25) h = 25;
+
+            // Color based on position (rainbow across width)
+            float hue = (float)x / lineWidth;
+            float hh = hue * 6.0f;
+            int i = (int)hh;
+            float f = hh - i;
+            float q = 1.0f - f;
             int r, g, bb;
-            switch(b) {
-                case 0: r = 255; g = 0;   bb = 0;   break;  // red
-                case 1: r = 255; g = 128; bb = 0;   break;  // orange
-                case 2: r = 255; g = 255; bb = 0;   break;  // yellow
-                case 3: r = 0;   g = 255; bb = 0;   break;  // green
-                case 4: r = 0;   g = 255; bb = 255; break;  // cyan
-                case 5: r = 0;   g = 0;   bb = 255; break;  // blue
-                case 6: r = 128; g = 0;   bb = 255; break;  // purple
-                case 7: r = 255; g = 0;   bb = 255; break;  // magenta
+            switch (i % 6) {
+                case 0: r = 255; g = (int)(f * 255); bb = 0; break;
+                case 1: r = (int)(q * 255); g = 255; bb = 0; break;
+                case 2: r = 0; g = 255; bb = (int)(f * 255); break;
+                case 3: r = 0; g = (int)(q * 255); bb = 255; break;
+                case 4: r = (int)(f * 255); g = 0; bb = 255; break;
+                case 5: r = 255; g = 0; bb = (int)(q * 255); break;
+                default: r = 255; g = 0; bb = 0; break;
             }
 
             // Apply brightness and depth fade
@@ -882,17 +896,10 @@ void effect_spectrum3d(FrameCanvas *c, float t, int br) {
             g = (int)(g * fade * br / 255);
             bb = (int)(bb * fade * br / 255);
 
-            // Draw bar
-            for (int dy = 0; dy < h; dy++) {
-                int py = baseY - dy;
-                if (py >= 0 && py < HEIGHT) {
-                    for (int dx = 0; dx < barWidth - 1; dx++) {
-                        int px = baseX + dx;
-                        if (px >= 0 && px < WIDTH) {
-                            c->SetPixel(px, py, r, g, bb);
-                        }
-                    }
-                }
+            // Draw the point at height offset from baseline
+            int py = baseY - h;
+            if (py >= 0 && py < HEIGHT) {
+                c->SetPixel(px, py, r, g, bb);
             }
         }
     }
