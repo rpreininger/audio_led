@@ -62,13 +62,25 @@ ctl.!default {
 }
 ```
 
-### Step 3: Set permissions
+### Step 3: Set permissions on sound devices
+
+```bash
+sudo chmod 666 /dev/snd/*
+```
+
+**Note:** This must be done after every reboot, or add to `/etc/rc.local` before `exit 0`:
+
+```bash
+chmod 666 /dev/snd/*
+```
+
+### Step 4: Set ALSA config permissions
 
 ```bash
 sudo chmod 644 /etc/asound.conf
 ```
 
-### Step 4: Add user to audio group (optional but recommended)
+### Step 5: Add user to audio group (optional)
 
 ```bash
 sudo usermod -a -G audio $USER
