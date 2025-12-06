@@ -1,0 +1,10 @@
+visuals plugin:
+project/
+│
+├── CMakeLists.txt
+├── main.cpp
+├── lua_api.cpp
+├── lua_api.h
+├── preset.json
+└── libs/
+    └── nlohmann_json.hpp     (single-header JSON lib)
