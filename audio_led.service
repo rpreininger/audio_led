@@ -1,0 +1,15 @@
+[Unit]
+Description=Audio LED Visualizer
+After=network.target sound.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/chmod 666 /dev/snd/*
+ExecStart=/home/pi/audio_led/audio_led --scripts /home/pi/audio_led/effects/scripts
+WorkingDirectory=/home/pi/audio_led
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
