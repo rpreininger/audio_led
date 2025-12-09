@@ -40,9 +40,15 @@ struct Settings {
     std::atomic<float> sensitivity{4.0f};     // audio sensitivity multiplier (lower for line-in)
     std::atomic<bool> autoLoop{true};         // true = cycle through effects
     std::atomic<int> modeSpeed{4};            // seconds between Volume Bars mode changes
+    std::atomic<int> animSpeed{100};          // animation speed percentage (10-200%)
 };
 
 Settings settings;
+
+// ====================================================================
+// GLOBAL TIMING
+// ====================================================================
+static std::atomic<float> g_deltaTime{0.016f};  // Time since last frame in seconds
 
 // ====================================================================
 // SHARED AUDIO STATE
@@ -252,19 +258,20 @@ void effect_volume(FrameCanvas *c, int br) {
     float vol = audio.volume.load();
     float beat = audio.beat.load();
     float threshold = settings.noiseThreshold.load();
+    float dt = g_deltaTime.load();
 
     if (vol < threshold) vol = 0;
 
     // Change mode based on modeSpeed setting or on strong beat
     int modeSpeedSec = settings.modeSpeed.load();
-    modeTimer += 0.016f;
+    modeTimer += dt;
     if (modeTimer > (float)modeSpeedSec || (beat > 0.8f && modeTimer > 1.0f)) {
         mode = (mode + 1) % 6;
         modeTimer = 0;
     }
 
-    // Slowly rotate hue
-    hue += 0.005f;
+    // Slowly rotate hue (using deltaTime)
+    hue += 0.3f * dt;  // ~0.3 per second
     if (hue > 1.0f) hue -= 1.0f;
 
     // HSV to RGB
@@ -314,7 +321,7 @@ void effect_volume(FrameCanvas *c, int br) {
         case 1: {
             // Rotating triangle
             static float angle = 0;
-            angle += 0.03f + vol * 0.1f;  // Rotation speed based on volume
+            angle += (2.0f + vol * 6.0f) * dt;  // Rotation speed based on volume (using deltaTime)
 
             int cx = WIDTH / 2;
             int cy = HEIGHT / 2;
@@ -434,9 +441,10 @@ void effect_beat(FrameCanvas *c, float t, int br) {
     float beat = audio.beat.load();
     float vol = audio.volume.load();
     float threshold = settings.noiseThreshold.load();
+    float dt = g_deltaTime.load();
 
-    // Slowly cycle hue
-    hue += 0.003f;
+    // Slowly cycle hue (using deltaTime)
+    hue += 0.2f * dt;  // ~0.2 per second
     if (hue > 1.0f) hue -= 1.0f;
 
     // HSV to RGB helper
@@ -701,8 +709,9 @@ void effect_rain(FrameCanvas *c, float t, int br) {
         for (int x = 0; x < WIDTH; x++)
             c->SetPixel(x, y, 0, 0, 0);
 
-    // Move and draw drops (slowed down)
-    float speed = 0.1f + vol * 0.5f;
+    // Move and draw drops (using deltaTime for consistent speed)
+    float dt = g_deltaTime.load();
+    float speed = (10.0f + vol * 50.0f) * dt;  // pixels per second * dt
     for (int i = 0; i < 32; i++) {
         drops[i][1] += speed;
         if (drops[i][1] >= HEIGHT) {
@@ -749,16 +758,15 @@ void effect_matrix(FrameCanvas *c, float t, int br) {
         }
     }
 
-    // Update and draw columns (slowed down)
-    static float columnAccum[WIDTH] = {0};
-    float activeSpeed = 0.1f + vol * 0.3f;
+    // Update and draw columns (using deltaTime for consistent speed)
+    float dt = g_deltaTime.load();
+    static float columnPos[WIDTH] = {0};
+    float activeSpeed = (15.0f + vol * 45.0f) * dt;  // pixels per second * dt
     for (int x = 0; x < WIDTH; x += 2) {
-        columnAccum[x] += (speeds[x] * 0.1f) + activeSpeed;
-        if (columnAccum[x] >= 1.0f) {
-            columns[x] += (int)columnAccum[x];
-            columnAccum[x] -= (int)columnAccum[x];
-        }
+        columnPos[x] += (speeds[x] * 5.0f + activeSpeed) * dt * 60.0f;
+        columns[x] = (int)columnPos[x];
         if (columns[x] >= HEIGHT + 15) {
+            columnPos[x] = 0;
             columns[x] = 0;
             speeds[x] = 1 + rand() % 3;
         }
@@ -797,7 +805,9 @@ void effect_stars(FrameCanvas *c, float t, int br) {
         for (int x = 0; x < WIDTH; x++)
             c->SetPixel(x, y, 0, 0, 0);
 
-    float speed = 0.05f + vol * 0.2f;  // Slowed down to 1/10
+    // Using deltaTime for consistent speed
+    float dt = g_deltaTime.load();
+    float speed = (5.0f + vol * 20.0f) * dt;  // units per second * dt
 
     for (int i = 0; i < 64; i++) {
         stars[i][2] -= speed;
@@ -1257,6 +1267,12 @@ const char* HTML_PAGE = R"HTMLPAGE(
     </div>
 
     <div class="control">
+        <label>Animation Speed</label>
+        <input type="range" id="animspeed" min="10" max="200" value="100" oninput="update()">
+        <div class="value" id="animspeedVal">100%</div>
+    </div>
+
+    <div class="control">
         <label style="display: inline;">Auto Loop Effects</label>
         <input type="checkbox" id="autoloop" checked onchange="update()" style="width: 24px; height: 24px; margin-left: 10px; vertical-align: middle;">
         <span id="autoloopStatus" style="margin-left: 10px; color: #00d4ff;">ON</span>
@@ -1272,6 +1288,7 @@ const char* HTML_PAGE = R"HTMLPAGE(
             var threshold = document.getElementById("threshold").value;
             var duration = document.getElementById("duration").value;
             var modespeed = document.getElementById("modespeed").value;
+            var animspeed = document.getElementById("animspeed").value;
             var autoloop = document.getElementById("autoloop").checked ? 1 : 0;
 
             document.getElementById("brightnessVal").textContent = brightness;
@@ -1279,11 +1296,12 @@ const char* HTML_PAGE = R"HTMLPAGE(
             document.getElementById("thresholdVal").textContent = (threshold/100).toFixed(2);
             document.getElementById("durationVal").textContent = duration + "s";
             document.getElementById("modespeedVal").textContent = modespeed + "s";
+            document.getElementById("animspeedVal").textContent = animspeed + "%";
             document.getElementById("autoloopStatus").textContent = autoloop ? "ON" : "OFF";
 
             fetch("/set?effect=" + effect + "&brightness=" + brightness +
                   "&sensitivity=" + sensitivity + "&threshold=" + threshold +
-                  "&duration=" + duration + "&modespeed=" + modespeed + "&autoloop=" + autoloop)
+                  "&duration=" + duration + "&modespeed=" + modespeed + "&animspeed=" + animspeed + "&autoloop=" + autoloop)
                 .then(r => r.text())
                 .then(t => document.getElementById("status").textContent = t)
                 .catch(e => document.getElementById("status").textContent = "Error: " + e);
@@ -1299,12 +1317,14 @@ const char* HTML_PAGE = R"HTMLPAGE(
                 document.getElementById("threshold").value = data.threshold * 100;
                 document.getElementById("duration").value = data.duration;
                 document.getElementById("modespeed").value = data.modespeed;
+                document.getElementById("animspeed").value = data.animspeed;
                 document.getElementById("autoloop").checked = data.autoloop;
                 document.getElementById("brightnessVal").textContent = data.brightness;
                 document.getElementById("sensitivityVal").textContent = data.sensitivity + "%";
                 document.getElementById("thresholdVal").textContent = data.threshold.toFixed(2);
                 document.getElementById("durationVal").textContent = data.duration + "s";
                 document.getElementById("modespeedVal").textContent = data.modespeed + "s";
+                document.getElementById("animspeedVal").textContent = data.animspeed + "%";
                 document.getElementById("autoloopStatus").textContent = data.autoloop ? "ON" : "OFF";
             });
     </script>
@@ -1340,6 +1360,9 @@ void handleClient(int clientSocket) {
         if ((pos = request.find("modespeed=")) != std::string::npos) {
             settings.modeSpeed.store(atoi(request.c_str() + pos + 10));
         }
+        if ((pos = request.find("animspeed=")) != std::string::npos) {
+            settings.animSpeed.store(atoi(request.c_str() + pos + 10));
+        }
         if ((pos = request.find("autoloop=")) != std::string::npos) {
             settings.autoLoop.store(atoi(request.c_str() + pos + 9) != 0);
         }
@@ -1354,6 +1377,7 @@ void handleClient(int clientSocket) {
              << ",\"threshold\":" << settings.noiseThreshold.load()
              << ",\"duration\":" << settings.effectDuration.load()
              << ",\"modespeed\":" << settings.modeSpeed.load()
+             << ",\"animspeed\":" << settings.animSpeed.load()
              << ",\"autoloop\":" << (settings.autoLoop.load() ? "true" : "false") << "}";
         response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + json.str();
     }
@@ -1439,11 +1463,17 @@ int main() {
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
     auto t0 = std::chrono::steady_clock::now();
+    auto lastFrame = std::chrono::steady_clock::now();
 
     while (true) {
-        float timeSec = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0
-        ).count() / 1000.0f;
+        auto now = std::chrono::steady_clock::now();
+        float timeSec = std::chrono::duration<float>(now - t0).count();
+
+        // Calculate delta time since last frame (with speed multiplier)
+        float dt = std::chrono::duration<float>(now - lastFrame).count();
+        lastFrame = now;
+        float speedMult = settings.animSpeed.load() / 100.0f;
+        g_deltaTime.store(dt * speedMult);
 
         // Get settings
         int br = settings.brightness.load();
@@ -1465,7 +1495,5 @@ int main() {
 
         renderEffect(id, canvas, timeSec, br);
         canvas = matrix->SwapOnVSync(canvas);
-
-        // No sleep - VSync handles timing, maximizes refresh rate
     }
 }
