@@ -39,6 +39,7 @@ struct Settings {
     std::atomic<int> currentEffect{-1};       // -1 = auto, 0-10 = manual
     std::atomic<float> sensitivity{4.0f};     // audio sensitivity multiplier (lower for line-in)
     std::atomic<bool> autoLoop{true};         // true = cycle through effects
+    std::atomic<int> modeSpeed{4};            // seconds between Volume Bars mode changes
 };
 
 Settings settings;
@@ -254,9 +255,10 @@ void effect_volume(FrameCanvas *c, int br) {
 
     if (vol < threshold) vol = 0;
 
-    // Change mode every ~4 seconds or on strong beat
+    // Change mode based on modeSpeed setting or on strong beat
+    int modeSpeedSec = settings.modeSpeed.load();
     modeTimer += 0.016f;
-    if (modeTimer > 4.0f || (beat > 0.8f && modeTimer > 1.0f)) {
+    if (modeTimer > (float)modeSpeedSec || (beat > 0.8f && modeTimer > 1.0f)) {
         mode = (mode + 1) % 6;
         modeTimer = 0;
     }
@@ -310,16 +312,40 @@ void effect_volume(FrameCanvas *c, int br) {
             break;
         }
         case 1: {
-            // Multiple thin bars
-            int numBars = 8;
-            int barW = WIDTH / numBars;
-            for (int i = 0; i < numBars; i++) {
-                int barH = h + (int)(sin(i * 0.8f + hue * 10) * h * 0.3f);
-                if (barH < 0) barH = 0;
-                if (barH > HEIGHT) barH = HEIGHT;
-                auto [r,g,b] = hsvRgb(hue + i * 0.1f, br);
-                for (int y = HEIGHT - barH; y < HEIGHT; y++) {
-                    for (int x = i * barW + 2; x < (i+1) * barW - 2; x++) {
+            // Rotating triangle
+            static float angle = 0;
+            angle += 0.03f + vol * 0.1f;  // Rotation speed based on volume
+
+            int cx = WIDTH / 2;
+            int cy = HEIGHT / 2;
+            float size = 15.0f + vol * 40.0f;  // Triangle size based on volume
+
+            // 3 triangle vertices
+            float angles[3] = {angle, angle + 2.094f, angle + 4.189f};  // 120 degrees apart
+            int px[3], py[3];
+            for (int i = 0; i < 3; i++) {
+                px[i] = cx + (int)(cos(angles[i]) * size);
+                py[i] = cy + (int)(sin(angles[i]) * size * 0.5f);  // Squash for aspect ratio
+            }
+
+            // Draw filled triangle using scanline
+            for (int y = 0; y < HEIGHT; y++) {
+                for (int x = 0; x < WIDTH; x++) {
+                    // Point-in-triangle test using barycentric coordinates
+                    float d1 = (float)(x - px[1]) * (py[0] - py[1]) - (px[0] - px[1]) * (y - py[1]);
+                    float d2 = (float)(x - px[2]) * (py[1] - py[2]) - (px[1] - px[2]) * (y - py[2]);
+                    float d3 = (float)(x - px[0]) * (py[2] - py[0]) - (px[2] - px[0]) * (y - py[0]);
+
+                    bool neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+                    bool pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+                    if (!(neg && pos)) {
+                        // Inside triangle
+                        float dx = x - cx, dy = y - cy;
+                        float dist = sqrt(dx*dx + dy*dy);
+                        float f = 1.0f - dist / (size + 1);
+                        if (f < 0.3f) f = 0.3f;
+                        auto [r,g,b] = hsvRgb(hue + dist * 0.01f, br * f);
                         c->SetPixel(x, y, r, g, b);
                     }
                 }
@@ -403,9 +429,33 @@ void effect_volume(FrameCanvas *c, int br) {
 
 // ---------------------- Beat Pulse -------------------------------
 void effect_beat(FrameCanvas *c, float t, int br) {
+    static float hue = 0;
+
     float beat = audio.beat.load();
     float vol = audio.volume.load();
     float threshold = settings.noiseThreshold.load();
+
+    // Slowly cycle hue
+    hue += 0.003f;
+    if (hue > 1.0f) hue -= 1.0f;
+
+    // HSV to RGB helper
+    auto hsvRgb = [](float h, float bright) -> std::tuple<int,int,int> {
+        float hh = h * 6.0f;
+        int i = (int)hh;
+        float f = hh - i;
+        float q = 1.0f - f;
+        float r, g, b;
+        switch(i % 6) {
+            case 0: r=1; g=f; b=0; break;
+            case 1: r=q; g=1; b=0; break;
+            case 2: r=0; g=1; b=f; break;
+            case 3: r=0; g=q; b=1; break;
+            case 4: r=f; g=0; b=1; break;
+            default: r=1; g=0; b=q; break;
+        }
+        return {(int)(r*bright), (int)(g*bright), (int)(b*bright)};
+    };
 
     // Clear entire screen to black first
     for (int y = 0; y < HEIGHT; y++) {
@@ -427,7 +477,7 @@ void effect_beat(FrameCanvas *c, float t, int br) {
     int cx = WIDTH/2;
     int cy = HEIGHT/2;
 
-    // Draw circle
+    // Draw circle with cycling color
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
             float dx = x - cx;
@@ -436,10 +486,50 @@ void effect_beat(FrameCanvas *c, float t, int br) {
 
             if (d < radius) {
                 float f = 1.0f - d/radius;
-                int r = (int)(f * br);
-                int g = (int)(f * 150);
-                int b = (int)(f * 255);
+                auto [r, g, b] = hsvRgb(hue + d * 0.005f, br * f);
                 c->SetPixel(x, y, r, g, b);
+            }
+        }
+    }
+
+    // Draw frequency wave line through the middle
+    float spec[8];
+    {
+        std::lock_guard<std::mutex> lock(audio.specMutex);
+        for (int i = 0; i < 8; i++) spec[i] = audio.spectrum[i];
+    }
+
+    // Complementary color for line (opposite hue)
+    float lineHue = hue + 0.5f;
+    if (lineHue > 1.0f) lineHue -= 1.0f;
+
+    // Draw a continuous wave line based on spectrum
+    for (int x = 0; x < WIDTH; x++) {
+        // Interpolate between spectrum bands
+        float bandPos = (float)x / WIDTH * 7.0f;
+        int band1 = (int)bandPos;
+        int band2 = band1 + 1;
+        if (band2 > 7) band2 = 7;
+        float frac = bandPos - band1;
+
+        float val = spec[band1] * (1.0f - frac) + spec[band2] * frac;
+        if (val < threshold) val = 0;
+
+        int offset = (int)(val * 0.3f);
+        if (offset > 20) offset = 20;
+
+        // Line color shifts slightly across width
+        auto [lr, lg, lb] = hsvRgb(lineHue + (float)x / WIDTH * 0.2f, br);
+
+        // Draw vertical line segment (wave thickness)
+        for (int dy = -1; dy <= 1; dy++) {
+            int y = cy + offset + dy;
+            if (y >= 0 && y < HEIGHT) {
+                c->SetPixel(x, y, lr, lg, lb);
+            }
+            y = cy - offset + dy;
+            if (y >= 0 && y < HEIGHT) {
+                c->SetPixel(x, y, lr, lg, lb);
             }
         }
     }
@@ -1156,6 +1246,12 @@ const char* HTML_PAGE = R"HTMLPAGE(
     </div>
 
     <div class="control">
+        <label>Mode Change Speed (seconds)</label>
+        <input type="range" id="modespeed" min="1" max="30" value="4" oninput="update()">
+        <div class="value" id="modespeedVal">4s</div>
+    </div>
+
+    <div class="control">
         <label style="display: inline;">Auto Loop Effects</label>
         <input type="checkbox" id="autoloop" checked onchange="update()" style="width: 24px; height: 24px; margin-left: 10px; vertical-align: middle;">
         <span id="autoloopStatus" style="margin-left: 10px; color: #00d4ff;">ON</span>
@@ -1170,17 +1266,19 @@ const char* HTML_PAGE = R"HTMLPAGE(
             var sensitivity = document.getElementById("sensitivity").value;
             var threshold = document.getElementById("threshold").value;
             var duration = document.getElementById("duration").value;
+            var modespeed = document.getElementById("modespeed").value;
             var autoloop = document.getElementById("autoloop").checked ? 1 : 0;
 
             document.getElementById("brightnessVal").textContent = brightness;
             document.getElementById("sensitivityVal").textContent = sensitivity + "%";
             document.getElementById("thresholdVal").textContent = (threshold/100).toFixed(2);
             document.getElementById("durationVal").textContent = duration + "s";
+            document.getElementById("modespeedVal").textContent = modespeed + "s";
             document.getElementById("autoloopStatus").textContent = autoloop ? "ON" : "OFF";
 
             fetch("/set?effect=" + effect + "&brightness=" + brightness +
                   "&sensitivity=" + sensitivity + "&threshold=" + threshold +
-                  "&duration=" + duration + "&autoloop=" + autoloop)
+                  "&duration=" + duration + "&modespeed=" + modespeed + "&autoloop=" + autoloop)
                 .then(r => r.text())
                 .then(t => document.getElementById("status").textContent = t)
                 .catch(e => document.getElementById("status").textContent = "Error: " + e);
@@ -1195,11 +1293,13 @@ const char* HTML_PAGE = R"HTMLPAGE(
                 document.getElementById("sensitivity").value = data.sensitivity;
                 document.getElementById("threshold").value = data.threshold * 100;
                 document.getElementById("duration").value = data.duration;
+                document.getElementById("modespeed").value = data.modespeed;
                 document.getElementById("autoloop").checked = data.autoloop;
                 document.getElementById("brightnessVal").textContent = data.brightness;
                 document.getElementById("sensitivityVal").textContent = data.sensitivity + "%";
                 document.getElementById("thresholdVal").textContent = data.threshold.toFixed(2);
                 document.getElementById("durationVal").textContent = data.duration + "s";
+                document.getElementById("modespeedVal").textContent = data.modespeed + "s";
                 document.getElementById("autoloopStatus").textContent = data.autoloop ? "ON" : "OFF";
             });
     </script>
@@ -1232,6 +1332,9 @@ void handleClient(int clientSocket) {
         if ((pos = request.find("duration=")) != std::string::npos) {
             settings.effectDuration.store(atoi(request.c_str() + pos + 9));
         }
+        if ((pos = request.find("modespeed=")) != std::string::npos) {
+            settings.modeSpeed.store(atoi(request.c_str() + pos + 10));
+        }
         if ((pos = request.find("autoloop=")) != std::string::npos) {
             settings.autoLoop.store(atoi(request.c_str() + pos + 9) != 0);
         }
@@ -1245,6 +1348,7 @@ void handleClient(int clientSocket) {
              << ",\"sensitivity\":" << settings.sensitivity.load()
              << ",\"threshold\":" << settings.noiseThreshold.load()
              << ",\"duration\":" << settings.effectDuration.load()
+             << ",\"modespeed\":" << settings.modeSpeed.load()
              << ",\"autoloop\":" << (settings.autoLoop.load() ? "true" : "false") << "}";
         response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + json.str();
     }
