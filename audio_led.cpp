@@ -37,7 +37,7 @@ struct Settings {
     std::atomic<int> brightness{180};         // 0-255
     std::atomic<float> noiseThreshold{0.1f}; // volume threshold
     std::atomic<int> currentEffect{-1};       // -1 = auto, 0-10 = manual
-    std::atomic<float> sensitivity{100.0f};   // audio sensitivity multiplier
+    std::atomic<float> sensitivity{4.0f};     // audio sensitivity multiplier (lower for line-in)
     std::atomic<bool> autoLoop{true};         // true = cycle through effects
 };
 
@@ -178,22 +178,40 @@ void audioThread() {
 
         kiss_fft(cfg, in, out);
 
-        // 8-band spectrum
+        // 8-band spectrum with logarithmic frequency bands
+        // With 44.1kHz and N=1024: each bin = ~43Hz
+        // Band boundaries designed for musical perception:
+        // Band 0: Sub-bass     20-60 Hz    (bins 1-2)
+        // Band 1: Bass         60-150 Hz   (bins 2-4)
+        // Band 2: Low-mid      150-400 Hz  (bins 4-10)
+        // Band 3: Mid          400-1kHz    (bins 10-24)
+        // Band 4: Upper-mid    1-2.5kHz    (bins 24-58)
+        // Band 5: Presence     2.5-5kHz    (bins 58-116)
+        // Band 6: Brilliance   5-10kHz     (bins 116-232)
+        // Band 7: Air          10-20kHz    (bins 232-465)
         {
             std::lock_guard<std::mutex> lock(audio.specMutex);
 
-            int halfN = N/2;
-            int bandSize = halfN / 8;
+            // Logarithmic band boundaries (bin indices)
+            const int bandStart[8] = {1,   2,   4,   10,  24,  58,  116, 232};
+            const int bandEnd[8]   = {2,   4,   10,  24,  58,  116, 232, 465};
+
+            // Per-band gain compensation (bass naturally has more energy)
+            // Lower values = reduce gain, higher values = boost gain
+            const float bandGain[8] = {0.3f, 0.5f, 0.8f, 1.0f, 1.5f, 2.5f, 4.0f, 6.0f};
 
             for (int b = 0; b < 8; b++) {
                 float energy = 0;
-                int start = bandSize * b;
-                int end   = start + bandSize;
+                int start = bandStart[b];
+                int end = bandEnd[b];
+                if (end > N/2) end = N/2;  // Don't exceed Nyquist
 
                 for (int i = start; i < end; i++)
                     energy += std::sqrt(out[i].r*out[i].r + out[i].i*out[i].i);
 
-                audio.spectrum[b] = (energy / bandSize) * settings.sensitivity.load();
+                int binCount = end - start;
+                if (binCount < 1) binCount = 1;
+                audio.spectrum[b] = (energy / binCount) * bandGain[b] * settings.sensitivity.load();
             }
         }
 
@@ -210,12 +228,11 @@ void audioThread() {
         }
         audio.beat.store(beat_smooth);
 
-        // Debug every 2 seconds
-        if (frameCount % 100 == 0) {
+        // Debug every ~2 seconds (at ~43 fps audio = ~86 iterations)
+        if (frameCount % 86 == 0) {
             std::cerr << "Vol: " << vol << " Beat: " << beat_smooth << std::endl;
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // No sleep needed - snd_pcm_readi blocks until samples are ready
     }
 }
 
@@ -225,24 +242,161 @@ void audioThread() {
 
 // ---------------------- Volume Bars ------------------------------
 void effect_volume(FrameCanvas *c, int br) {
+    static int mode = 0;
+    static float modeTimer = 0;
+    static float hue = 0;
+    static float particleX[16], particleY[16], particleVX[16], particleVY[16];
+    static bool particlesInit = false;
+
     float vol = audio.volume.load();
+    float beat = audio.beat.load();
     float threshold = settings.noiseThreshold.load();
 
-    // Noise threshold
     if (vol < threshold) vol = 0;
+
+    // Change mode every ~4 seconds or on strong beat
+    modeTimer += 0.016f;
+    if (modeTimer > 4.0f || (beat > 0.8f && modeTimer > 1.0f)) {
+        mode = (mode + 1) % 6;
+        modeTimer = 0;
+    }
+
+    // Slowly rotate hue
+    hue += 0.005f;
+    if (hue > 1.0f) hue -= 1.0f;
+
+    // HSV to RGB
+    auto hsvRgb = [](float h, float bright) -> std::tuple<int,int,int> {
+        float hh = h * 6.0f;
+        int i = (int)hh;
+        float f = hh - i;
+        float q = 1.0f - f;
+        float r, g, b;
+        switch(i % 6) {
+            case 0: r=1; g=f; b=0; break;
+            case 1: r=q; g=1; b=0; break;
+            case 2: r=0; g=1; b=f; break;
+            case 3: r=0; g=q; b=1; break;
+            case 4: r=f; g=0; b=1; break;
+            default: r=1; g=0; b=q; break;
+        }
+        return {(int)(r*bright), (int)(g*bright), (int)(b*bright)};
+    };
+
+    // Clear screen
+    for (int y = 0; y < HEIGHT; y++)
+        for (int x = 0; x < WIDTH; x++)
+            c->SetPixel(x, y, 0, 0, 0);
 
     int h = (int)(vol * 80);
     if (h > HEIGHT) h = HEIGHT;
 
-    for (int y = 0; y < HEIGHT; y++) {
-        for (int x = 0; x < WIDTH; x++) {
-            if (h > 0 && y >= HEIGHT - h) {
-                // Gradient from green (bottom) to cyan (top)
-                float f = (float)(y - (HEIGHT - h)) / h;
-                c->SetPixel(x, y, 0, (int)(br * (1-f*0.5)), (int)(255 * f));
-            } else {
-                c->SetPixel(x, y, 0, 0, 0);
+    auto [cr, cg, cb] = hsvRgb(hue, br);
+
+    switch(mode) {
+        case 0: {
+            // Centered expanding bars
+            int barWidth = (int)(vol * 60) + 4;
+            if (barWidth > WIDTH/2) barWidth = WIDTH/2;
+            int cx = WIDTH/2;
+            for (int y = HEIGHT - h; y < HEIGHT; y++) {
+                float yf = (float)(y - (HEIGHT-h)) / (h > 0 ? h : 1);
+                auto [r,g,b] = hsvRgb(hue + yf * 0.3f, br);
+                for (int x = cx - barWidth; x < cx + barWidth; x++) {
+                    if (x >= 0 && x < WIDTH)
+                        c->SetPixel(x, y, r, g, b);
+                }
             }
+            break;
+        }
+        case 1: {
+            // Multiple thin bars
+            int numBars = 8;
+            int barW = WIDTH / numBars;
+            for (int i = 0; i < numBars; i++) {
+                int barH = h + (int)(sin(i * 0.8f + hue * 10) * h * 0.3f);
+                if (barH < 0) barH = 0;
+                if (barH > HEIGHT) barH = HEIGHT;
+                auto [r,g,b] = hsvRgb(hue + i * 0.1f, br);
+                for (int y = HEIGHT - barH; y < HEIGHT; y++) {
+                    for (int x = i * barW + 2; x < (i+1) * barW - 2; x++) {
+                        c->SetPixel(x, y, r, g, b);
+                    }
+                }
+            }
+            break;
+        }
+        case 2: {
+            // Diamond shape
+            int size = (int)(vol * 50) + 5;
+            int cx = WIDTH/2, cy = HEIGHT/2;
+            for (int y = 0; y < HEIGHT; y++) {
+                for (int x = 0; x < WIDTH; x++) {
+                    int dist = abs(x - cx) + abs(y - cy);
+                    if (dist < size) {
+                        float f = 1.0f - (float)dist / size;
+                        auto [r,g,b] = hsvRgb(hue + f * 0.2f, br * f);
+                        c->SetPixel(x, y, r, g, b);
+                    }
+                }
+            }
+            break;
+        }
+        case 3: {
+            // Horizontal mirrored bars (top and bottom)
+            int barH = h / 2;
+            for (int y = 0; y < barH; y++) {
+                float yf = (float)y / (barH > 0 ? barH : 1);
+                auto [r,g,b] = hsvRgb(hue + yf * 0.2f, br * (1.0f - yf * 0.5f));
+                for (int x = 0; x < WIDTH; x++) {
+                    c->SetPixel(x, y, r, g, b);
+                    c->SetPixel(x, HEIGHT - 1 - y, r, g, b);
+                }
+            }
+            break;
+        }
+        case 4: {
+            // Corner triangles
+            int size = (int)(vol * 60) + 5;
+            for (int y = 0; y < HEIGHT; y++) {
+                for (int x = 0; x < WIDTH; x++) {
+                    bool inTri = (x + y < size) ||
+                                 (x + (HEIGHT-y) < size) ||
+                                 ((WIDTH-x) + y < size) ||
+                                 ((WIDTH-x) + (HEIGHT-y) < size);
+                    if (inTri) {
+                        int d1 = x + y, d2 = x + (HEIGHT-y), d3 = (WIDTH-x) + y, d4 = (WIDTH-x) + (HEIGHT-y);
+                        int dist = d1;
+                        if (d2 < dist) dist = d2;
+                        if (d3 < dist) dist = d3;
+                        if (d4 < dist) dist = d4;
+                        float f = 1.0f - (float)dist / size;
+                        auto [r,g,b] = hsvRgb(hue + f * 0.3f, br * f);
+                        c->SetPixel(x, y, r, g, b);
+                    }
+                }
+            }
+            break;
+        }
+        case 5: {
+            // Concentric rings
+            int cx = WIDTH/2, cy = HEIGHT/2;
+            int maxRad = (int)(vol * 50) + 10;
+            for (int y = 0; y < HEIGHT; y++) {
+                for (int x = 0; x < WIDTH; x++) {
+                    float dx = x - cx, dy = y - cy;
+                    float dist = sqrt(dx*dx + dy*dy);
+                    if (dist < maxRad) {
+                        int ring = (int)(dist / 8);
+                        if (ring % 2 == 0) {
+                            float f = 1.0f - dist / maxRad;
+                            auto [r,g,b] = hsvRgb(hue + ring * 0.15f, br * f);
+                            c->SetPixel(x, y, r, g, b);
+                        }
+                    }
+                }
+            }
+            break;
         }
     }
 }
@@ -985,8 +1139,8 @@ const char* HTML_PAGE = R"HTMLPAGE(
 
     <div class="control">
         <label>Sensitivity</label>
-        <input type="range" id="sensitivity" min="10" max="500" value="100" oninput="update()">
-        <div class="value" id="sensitivityVal">100%</div>
+        <input type="range" id="sensitivity" min="1" max="50" value="4" oninput="update()">
+        <div class="value" id="sensitivityVal">4%</div>
     </div>
 
     <div class="control">
@@ -1203,6 +1357,6 @@ int main() {
         renderEffect(id, canvas, timeSec, br);
         canvas = matrix->SwapOnVSync(canvas);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // No sleep - VSync handles timing, maximizes refresh rate
     }
 }
