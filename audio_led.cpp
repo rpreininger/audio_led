@@ -48,7 +48,8 @@ Settings settings;
 // ====================================================================
 // GLOBAL TIMING
 // ====================================================================
-static std::atomic<float> g_deltaTime{0.016f};  // Time since last frame in seconds
+static std::atomic<float> g_deltaTime{0.016f};     // Time since last frame (with speed multiplier)
+static std::atomic<float> g_rawDeltaTime{0.016f};  // Raw time since last frame (for timers)
 
 // ====================================================================
 // SHARED AUDIO STATE
@@ -259,18 +260,19 @@ void effect_volume(FrameCanvas *c, int br) {
     float beat = audio.beat.load();
     float threshold = settings.noiseThreshold.load();
     float dt = g_deltaTime.load();
+    float rawDt = g_rawDeltaTime.load();
 
     if (vol < threshold) vol = 0;
 
-    // Change mode based on modeSpeed setting or on strong beat
+    // Change mode based on modeSpeed setting (uses raw time, not affected by animation speed)
     int modeSpeedSec = settings.modeSpeed.load();
-    modeTimer += dt;
-    if (modeTimer > (float)modeSpeedSec || (beat > 0.8f && modeTimer > 1.0f)) {
+    modeTimer += rawDt;
+    if (modeTimer > (float)modeSpeedSec) {
         mode = (mode + 1) % 6;
         modeTimer = 0;
     }
 
-    // Slowly rotate hue (using deltaTime)
+    // Slowly rotate hue (using deltaTime - affected by animation speed)
     hue += 0.3f * dt;  // ~0.3 per second
     if (hue > 1.0f) hue -= 1.0f;
 
@@ -1469,11 +1471,12 @@ int main() {
         auto now = std::chrono::steady_clock::now();
         float timeSec = std::chrono::duration<float>(now - t0).count();
 
-        // Calculate delta time since last frame (with speed multiplier)
+        // Calculate delta time since last frame
         float dt = std::chrono::duration<float>(now - lastFrame).count();
         lastFrame = now;
+        g_rawDeltaTime.store(dt);  // Raw time for timers (mode changes etc)
         float speedMult = settings.animSpeed.load() / 100.0f;
-        g_deltaTime.store(dt * speedMult);
+        g_deltaTime.store(dt * speedMult);  // Scaled time for animations
 
         // Get settings
         int br = settings.brightness.load();
@@ -1493,7 +1496,11 @@ int main() {
             id = 0;
         }
 
-        renderEffect(id, canvas, timeSec, br);
+        renderEffect(id, canvas, timeSec, 255);  // Always render at full brightness
+
+        // Apply global brightness
+        matrix->SetBrightness(br * 100 / 255);  // SetBrightness takes 0-100
+
         canvas = matrix->SwapOnVSync(canvas);
     }
 }
