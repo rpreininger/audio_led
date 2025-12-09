@@ -701,8 +701,8 @@ void effect_rain(FrameCanvas *c, float t, int br) {
         for (int x = 0; x < WIDTH; x++)
             c->SetPixel(x, y, 0, 0, 0);
 
-    // Move and draw drops
-    float speed = 1.0f + vol * 5.0f;
+    // Move and draw drops (slowed down)
+    float speed = 0.1f + vol * 0.5f;
     for (int i = 0; i < 32; i++) {
         drops[i][1] += speed;
         if (drops[i][1] >= HEIGHT) {
@@ -749,10 +749,15 @@ void effect_matrix(FrameCanvas *c, float t, int br) {
         }
     }
 
-    // Update and draw columns
-    int activeSpeed = 1 + (int)(vol * 3);
+    // Update and draw columns (slowed down)
+    static float columnAccum[WIDTH] = {0};
+    float activeSpeed = 0.1f + vol * 0.3f;
     for (int x = 0; x < WIDTH; x += 2) {
-        columns[x] += speeds[x] + activeSpeed - 1;
+        columnAccum[x] += (speeds[x] * 0.1f) + activeSpeed;
+        if (columnAccum[x] >= 1.0f) {
+            columns[x] += (int)columnAccum[x];
+            columnAccum[x] -= (int)columnAccum[x];
+        }
         if (columns[x] >= HEIGHT + 15) {
             columns[x] = 0;
             speeds[x] = 1 + rand() % 3;
@@ -792,7 +797,7 @@ void effect_stars(FrameCanvas *c, float t, int br) {
         for (int x = 0; x < WIDTH; x++)
             c->SetPixel(x, y, 0, 0, 0);
 
-    float speed = 0.5f + vol * 2.0f;
+    float speed = 0.05f + vol * 0.2f;  // Slowed down to 1/10
 
     for (int i = 0; i < 64; i++) {
         stars[i][2] -= speed;
