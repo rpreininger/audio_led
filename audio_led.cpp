@@ -763,9 +763,9 @@ void effect_matrix(FrameCanvas *c, float t, int br) {
     // Update and draw columns (using deltaTime for consistent speed)
     float dt = g_deltaTime.load();
     static float columnPos[WIDTH] = {0};
-    float activeSpeed = (15.0f + vol * 45.0f) * dt;  // pixels per second * dt
+    float baseSpeed = 3.0f + vol * 10.0f;  // Base speed in pixels per second
     for (int x = 0; x < WIDTH; x += 2) {
-        columnPos[x] += (speeds[x] * 5.0f + activeSpeed) * dt * 60.0f;
+        columnPos[x] += (speeds[x] * 1.5f + baseSpeed) * dt;
         columns[x] = (int)columnPos[x];
         if (columns[x] >= HEIGHT + 15) {
             columnPos[x] = 0;
@@ -897,34 +897,67 @@ void effect_vu(FrameCanvas *c, int br) {
 
 // ---------------------- Waveform ---------------------------------
 void effect_wave(FrameCanvas *c, float t, int br) {
-    static float history[WIDTH] = {0};
-
     float vol = audio.volume.load();
+    float beat = audio.beat.load();
     float threshold = settings.noiseThreshold.load();
     if (vol < threshold) vol = 0;
 
-    // Shift history left
-    for (int i = 0; i < WIDTH - 1; i++)
-        history[i] = history[i + 1];
-    history[WIDTH - 1] = vol;
+    float dt = g_deltaTime.load();
 
     // Clear
     for (int y = 0; y < HEIGHT; y++)
         for (int x = 0; x < WIDTH; x++)
             c->SetPixel(x, y, 0, 0, 0);
 
-    // Draw waveform
+    // Live waveform - each column reacts to current audio
     int cy = HEIGHT / 2;
+    float baseAmplitude = vol * 28.0f;
+
+    // Phase offset scrolls continuously (base speed + volume boost)
+    static float phase = 0;
+    phase += dt * (3.0f + vol * 3.0f);
+
+    // Slow color cycling
+    static float hue = 0;
+    hue += dt * 0.1f;  // Full cycle in ~10 seconds
+    if (hue > 1.0f) hue -= 1.0f;
+
     for (int x = 0; x < WIDTH; x++) {
-        int amplitude = (int)(history[x] * 25);
+        // Create wave pattern that reacts to current volume
+        float wave = sinf(x * 0.15f + phase) * 0.3f +
+                     sinf(x * 0.08f - phase * 0.7f) * 0.2f +
+                     0.5f;  // base offset
+
+        // Amplitude based on live volume, modulated by wave pattern
+        int amplitude = (int)(baseAmplitude * wave + beat * 8.0f);
+        if (amplitude < 1 && vol > 0.05f) amplitude = 1;  // minimum visibility when sound
+
+        // HSV to RGB for color cycling (shifted by x position for gradient)
+        float h = hue + (float)x / WIDTH * 0.3f;  // slight gradient across width
+        if (h > 1.0f) h -= 1.0f;
+        float hh = h * 6.0f;
+        int i = (int)hh;
+        float f = hh - i;
+        float q = 1.0f - f;
+
+        float rr, gg, bb;
+        switch (i % 6) {
+            case 0: rr = 1; gg = f; bb = 0; break;
+            case 1: rr = q; gg = 1; bb = 0; break;
+            case 2: rr = 0; gg = 1; bb = f; break;
+            case 3: rr = 0; gg = q; bb = 1; break;
+            case 4: rr = f; gg = 0; bb = 1; break;
+            default: rr = 1; gg = 0; bb = q; break;
+        }
 
         for (int dy = -amplitude; dy <= amplitude; dy++) {
             int y = cy + dy;
             if (y >= 0 && y < HEIGHT) {
                 float dist = (float)abs(dy) / (amplitude + 1);
-                int r = (int)(br * (1 - dist) * 0.5f);
-                int g = (int)(br * (1 - dist));
-                int b = (int)(255 * (1 - dist));
+                float intensity = (1 - dist);
+                int r = (int)(br * intensity * rr);
+                int g = (int)(br * intensity * gg);
+                int b = (int)(br * intensity * bb);
                 c->SetPixel(x, y, r, g, b);
             }
         }
