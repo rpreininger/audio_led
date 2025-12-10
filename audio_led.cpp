@@ -41,9 +41,171 @@ struct Settings {
     std::atomic<bool> autoLoop{true};         // true = cycle through effects
     std::atomic<int> modeSpeed{4};            // seconds between Volume Bars mode changes
     std::atomic<int> animSpeed{100};          // animation speed percentage (10-200%)
+    std::atomic<bool> ftMode{false};          // false = audio visualizer, true = Flaschen-Taschen server
 };
 
 Settings settings;
+
+// ====================================================================
+// FLASCHEN-TASCHEN SERVER (UDP PPM receiver on port 1337)
+// ====================================================================
+static const int FT_PORT = 1337;
+static uint8_t ftFramebuffer[WIDTH * HEIGHT * 3] = {0};  // RGB framebuffer
+static std::mutex ftMutex;
+static std::atomic<bool> ftHasNewFrame{false};
+
+// Parse PPM P6 format from UDP packet
+bool parsePPM(const char* data, int len, int& imgWidth, int& imgHeight, int& offsetX, int& offsetY) {
+    if (len < 10) return false;
+
+    // Check magic number P6
+    if (data[0] != 'P' || data[1] != '6') return false;
+
+    int pos = 2;
+
+    // Skip whitespace
+    while (pos < len && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r')) pos++;
+
+    // Parse optional #FT comment for offsets, skip other comments
+    offsetX = 0;
+    offsetY = 0;
+    while (pos < len && data[pos] == '#') {
+        if (pos + 4 < len && data[pos+1] == 'F' && data[pos+2] == 'T' && data[pos+3] == ':') {
+            pos += 4;
+            while (pos < len && data[pos] == ' ') pos++;
+            // Parse x offset
+            offsetX = 0;
+            while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+                offsetX = offsetX * 10 + (data[pos] - '0');
+                pos++;
+            }
+            while (pos < len && data[pos] == ' ') pos++;
+            // Parse y offset
+            offsetY = 0;
+            while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+                offsetY = offsetY * 10 + (data[pos] - '0');
+                pos++;
+            }
+            // Skip rest of line (ignore z/layer)
+            while (pos < len && data[pos] != '\n') pos++;
+            if (pos < len) pos++;
+        } else {
+            // Skip regular comment
+            while (pos < len && data[pos] != '\n') pos++;
+            if (pos < len) pos++;
+        }
+    }
+
+    // Parse width
+    imgWidth = 0;
+    while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+        imgWidth = imgWidth * 10 + (data[pos] - '0');
+        pos++;
+    }
+
+    while (pos < len && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r')) pos++;
+
+    // Parse height
+    imgHeight = 0;
+    while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+        imgHeight = imgHeight * 10 + (data[pos] - '0');
+        pos++;
+    }
+
+    while (pos < len && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r')) pos++;
+
+    // Parse maxval (expect 255)
+    int maxval = 0;
+    while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+        maxval = maxval * 10 + (data[pos] - '0');
+        pos++;
+    }
+
+    // Skip single whitespace after maxval
+    if (pos < len && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r')) pos++;
+
+    if (imgWidth <= 0 || imgHeight <= 0 || imgWidth > 1024 || imgHeight > 1024) return false;
+    if (maxval != 255) return false;
+
+    int expectedBytes = imgWidth * imgHeight * 3;
+    if (pos + expectedBytes > len) return false;
+
+    // Copy pixels to framebuffer with offset
+    {
+        std::lock_guard<std::mutex> lock(ftMutex);
+        const uint8_t* pixelData = (const uint8_t*)(data + pos);
+
+        for (int y = 0; y < imgHeight; y++) {
+            int destY = offsetY + y;
+            if (destY < 0 || destY >= HEIGHT) continue;
+
+            for (int x = 0; x < imgWidth; x++) {
+                int destX = offsetX + x;
+                if (destX < 0 || destX >= WIDTH) continue;
+
+                int srcIdx = (y * imgWidth + x) * 3;
+                int dstIdx = (destY * WIDTH + destX) * 3;
+
+                ftFramebuffer[dstIdx + 0] = pixelData[srcIdx + 0];
+                ftFramebuffer[dstIdx + 1] = pixelData[srcIdx + 1];
+                ftFramebuffer[dstIdx + 2] = pixelData[srcIdx + 2];
+            }
+        }
+    }
+
+    ftHasNewFrame.store(true);
+    return true;
+}
+
+void ftServerThread() {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        std::cerr << "Failed to create FT UDP socket\n";
+        return;
+    }
+
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(FT_PORT);
+
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        std::cerr << "Failed to bind FT server to UDP port " << FT_PORT << "\n";
+        close(sock);
+        return;
+    }
+
+    std::cerr << "Flaschen-Taschen server listening on UDP port " << FT_PORT << "\n";
+
+    char buffer[65536];
+
+    while (true) {
+        struct sockaddr_in clientAddr;
+        socklen_t clientLen = sizeof(clientAddr);
+
+        int received = recvfrom(sock, buffer, sizeof(buffer), 0,
+                                (struct sockaddr*)&clientAddr, &clientLen);
+
+        if (received > 0) {
+            int w, h, ox, oy;
+            parsePPM(buffer, received, w, h, ox, oy);
+        }
+    }
+}
+
+// Render FT framebuffer to LED matrix
+void renderFT(FrameCanvas *c) {
+    std::lock_guard<std::mutex> lock(ftMutex);
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            int idx = (y * WIDTH + x) * 3;
+            c->SetPixel(x, y, ftFramebuffer[idx], ftFramebuffer[idx+1], ftFramebuffer[idx+2]);
+        }
+    }
+}
 
 // ====================================================================
 // GLOBAL TIMING
@@ -1233,7 +1395,7 @@ const char* HTML_PAGE = R"HTMLPAGE(
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Audio LED Control</title>
+    <title>LED Matrix Control</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto; padding: 10px; background: #1a1a2e; color: #eee; }
@@ -1243,14 +1405,39 @@ const char* HTML_PAGE = R"HTMLPAGE(
         input[type=range] { width: 100%; margin: 10px 0; }
         select { width: 100%; padding: 10px; font-size: 16px; background: #0f3460; color: #fff; border: none; border-radius: 5px; }
         .value { text-align: right; color: #00d4ff; font-size: 18px; }
-        button { width: 100%; padding: 15px; font-size: 18px; background: #e94560; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 20px; }
-        button:hover { background: #ff6b6b; }
         .status { text-align: center; padding: 10px; background: #0f3460; border-radius: 5px; margin-top: 10px; }
+        .mode-switch { display: flex; gap: 10px; }
+        .mode-btn { flex: 1; padding: 15px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; transition: all 0.3s; }
+        .mode-btn.active { background: #00d4ff; color: #1a1a2e; font-weight: bold; }
+        .mode-btn:not(.active) { background: #0f3460; color: #fff; }
+        .mode-btn:hover:not(.active) { background: #1a3a5c; }
+        .ft-info { background: #0f3460; padding: 10px; border-radius: 5px; margin-top: 10px; font-size: 14px; text-align: center; }
+        .audio-controls { }
+        .audio-controls.hidden { display: none; }
     </style>
 </head>
 <body>
-    <h1>Audio LED Control</h1>
+    <h1>LED Matrix Control</h1>
 
+    <div class="control">
+        <label>Display Mode</label>
+        <div class="mode-switch">
+            <button class="mode-btn active" id="btnAudio" onclick="setMode(0)">Audio Visualizer</button>
+            <button class="mode-btn" id="btnFT" onclick="setMode(1)">Flaschen-Taschen</button>
+        </div>
+        <div class="ft-info" id="ftInfo" style="display:none;">
+            UDP Server on port 1337<br>
+            Send PPM (P6) images to display
+        </div>
+    </div>
+
+    <div class="control">
+        <label>Brightness</label>
+        <input type="range" id="brightness" min="10" max="255" value="180" oninput="update()">
+        <div class="value" id="brightnessVal">180</div>
+    </div>
+
+    <div class="audio-controls" id="audioControls">
     <div class="control">
         <label>Effect</label>
         <select id="effect" onchange="update()">
@@ -1269,12 +1456,6 @@ const char* HTML_PAGE = R"HTMLPAGE(
             <option value="11">Color Wipe</option>
             <option value="12">Spectrum 3D</option>
         </select>
-    </div>
-
-    <div class="control">
-        <label>Brightness</label>
-        <input type="range" id="brightness" min="10" max="255" value="180" oninput="update()">
-        <div class="value" id="brightnessVal">180</div>
     </div>
 
     <div class="control">
@@ -1312,10 +1493,22 @@ const char* HTML_PAGE = R"HTMLPAGE(
         <input type="checkbox" id="autoloop" checked onchange="update()" style="width: 24px; height: 24px; margin-left: 10px; vertical-align: middle;">
         <span id="autoloopStatus" style="margin-left: 10px; color: #00d4ff;">ON</span>
     </div>
+    </div>
 
     <div class="status" id="status">Ready</div>
 
     <script>
+        var currentFtMode = 0;
+
+        function setMode(mode) {
+            currentFtMode = mode;
+            document.getElementById("btnAudio").className = mode == 0 ? "mode-btn active" : "mode-btn";
+            document.getElementById("btnFT").className = mode == 1 ? "mode-btn active" : "mode-btn";
+            document.getElementById("ftInfo").style.display = mode == 1 ? "block" : "none";
+            document.getElementById("audioControls").className = mode == 1 ? "audio-controls hidden" : "audio-controls";
+            update();
+        }
+
         function update() {
             var effect = document.getElementById("effect").value;
             var brightness = document.getElementById("brightness").value;
@@ -1336,7 +1529,8 @@ const char* HTML_PAGE = R"HTMLPAGE(
 
             fetch("/set?effect=" + effect + "&brightness=" + brightness +
                   "&sensitivity=" + sensitivity + "&threshold=" + threshold +
-                  "&duration=" + duration + "&modespeed=" + modespeed + "&animspeed=" + animspeed + "&autoloop=" + autoloop)
+                  "&duration=" + duration + "&modespeed=" + modespeed + "&animspeed=" + animspeed +
+                  "&autoloop=" + autoloop + "&ftmode=" + currentFtMode)
                 .then(r => r.text())
                 .then(t => document.getElementById("status").textContent = t)
                 .catch(e => document.getElementById("status").textContent = "Error: " + e);
@@ -1361,6 +1555,7 @@ const char* HTML_PAGE = R"HTMLPAGE(
                 document.getElementById("modespeedVal").textContent = data.modespeed + "s";
                 document.getElementById("animspeedVal").textContent = data.animspeed + "%";
                 document.getElementById("autoloopStatus").textContent = data.autoloop ? "ON" : "OFF";
+                setMode(data.ftmode ? 1 : 0);
             });
     </script>
 </body>
@@ -1401,6 +1596,9 @@ void handleClient(int clientSocket) {
         if ((pos = request.find("autoloop=")) != std::string::npos) {
             settings.autoLoop.store(atoi(request.c_str() + pos + 9) != 0);
         }
+        if ((pos = request.find("ftmode=")) != std::string::npos) {
+            settings.ftMode.store(atoi(request.c_str() + pos + 7) != 0);
+        }
 
         response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSettings updated!";
     }
@@ -1413,7 +1611,8 @@ void handleClient(int clientSocket) {
              << ",\"duration\":" << settings.effectDuration.load()
              << ",\"modespeed\":" << settings.modeSpeed.load()
              << ",\"animspeed\":" << settings.animSpeed.load()
-             << ",\"autoloop\":" << (settings.autoLoop.load() ? "true" : "false") << "}";
+             << ",\"autoloop\":" << (settings.autoLoop.load() ? "true" : "false")
+             << ",\"ftmode\":" << (settings.ftMode.load() ? "true" : "false") << "}";
         response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + json.str();
     }
     else {
@@ -1494,6 +1693,11 @@ int main() {
     std::thread webT(webServerThread);
     webT.detach();
 
+    // START FLASCHEN-TASCHEN SERVER
+    std::cerr << "Starting Flaschen-Taschen server...\n";
+    std::thread ftT(ftServerThread);
+    ftT.detach();
+
     // Wait for audio to initialize
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
@@ -1513,23 +1717,31 @@ int main() {
 
         // Get settings
         int br = settings.brightness.load();
-        int manualEffect = settings.currentEffect.load();
+        bool ftModeActive = settings.ftMode.load();
 
-        // Choose effect
-        int id;
-        bool loopEnabled = settings.autoLoop.load();
-        if (manualEffect >= 0 && manualEffect <= 12) {
-            // Manual effect selected - use it directly
-            id = manualEffect;
-        } else if (loopEnabled) {
-            // Auto mode with loop enabled - cycle through effects
-            id = autoEffect(timeSec);
+        if (ftModeActive) {
+            // Flaschen-Taschen mode: render from UDP framebuffer
+            renderFT(canvas);
         } else {
-            // Auto mode with loop disabled - stay on effect 0
-            id = 0;
-        }
+            // Audio visualizer mode
+            int manualEffect = settings.currentEffect.load();
 
-        renderEffect(id, canvas, timeSec, 255);  // Always render at full brightness
+            // Choose effect
+            int id;
+            bool loopEnabled = settings.autoLoop.load();
+            if (manualEffect >= 0 && manualEffect <= 12) {
+                // Manual effect selected - use it directly
+                id = manualEffect;
+            } else if (loopEnabled) {
+                // Auto mode with loop enabled - cycle through effects
+                id = autoEffect(timeSec);
+            } else {
+                // Auto mode with loop disabled - stay on effect 0
+                id = 0;
+            }
+
+            renderEffect(id, canvas, timeSec, 255);  // Always render at full brightness
+        }
 
         // Apply global brightness
         matrix->SetBrightness(br * 100 / 255);  // SetBrightness takes 0-100
