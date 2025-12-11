@@ -27,6 +27,15 @@
 #include "effect_spectrum.h"
 #include "effect_plasma.h"
 #include "effect_fire.h"
+#include "effect_beat.h"
+#include "effect_rain.h"
+#include "effect_matrix.h"
+#include "effect_stars.h"
+#include "effect_vu.h"
+#include "effect_wave.h"
+#include "effect_colorpulse.h"
+#include "effect_colorwipe.h"
+#include "effect_spectrum3d.h"
 
 using namespace rgb_matrix;
 
@@ -183,25 +192,38 @@ void renderFT(FrameCanvas* canvas) {
 
 // Load Lua effects from directory
 void loadLuaEffects(EffectManager& manager, const std::string& scriptsDir) {
+    std::cerr << "Looking for Lua scripts in: " << scriptsDir << std::endl;
+
     DIR* dir = opendir(scriptsDir.c_str());
     if (!dir) {
-        std::cerr << "Could not open scripts directory: " << scriptsDir << std::endl;
+        std::cerr << "WARNING: Could not open scripts directory: " << scriptsDir << std::endl;
+        std::cerr << "  Lua effects will not be available." << std::endl;
+        std::cerr << "  Copy effects/scripts/ to the Pi or use --scripts <path>" << std::endl;
         return;
     }
 
+    int luaCount = 0;
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         std::string filename = entry->d_name;
         if (filename.length() > 4 &&
             filename.substr(filename.length() - 4) == ".lua") {
             std::string path = scriptsDir + "/" + filename;
+            std::cerr << "  Loading: " << filename << std::endl;
             auto effect = std::make_unique<LuaEffect>(path);
+            // init() is called in registerEffect(), which calls reload()
+            // and sets m_valid. We register first, then check validity.
+            effect->init(128, 64);  // Initialize to load the script
             if (effect->isValid()) {
                 manager.registerEffect(std::move(effect));
+                luaCount++;
+            } else {
+                std::cerr << "  FAILED: " << filename << std::endl;
             }
         }
     }
     closedir(dir);
+    std::cerr << "Loaded " << luaCount << " Lua effects" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -254,9 +276,18 @@ int main(int argc, char* argv[]) {
 
     // Register builtin C++ effects
     effectManager.registerEffect(std::make_unique<EffectVolume>());
+    effectManager.registerEffect(std::make_unique<EffectBeat>());
     effectManager.registerEffect(std::make_unique<EffectSpectrum>());
     effectManager.registerEffect(std::make_unique<EffectPlasma>());
     effectManager.registerEffect(std::make_unique<EffectFire>());
+    effectManager.registerEffect(std::make_unique<EffectRain>());
+    effectManager.registerEffect(std::make_unique<EffectMatrix>());
+    effectManager.registerEffect(std::make_unique<EffectStars>());
+    effectManager.registerEffect(std::make_unique<EffectVU>());
+    effectManager.registerEffect(std::make_unique<EffectWave>());
+    effectManager.registerEffect(std::make_unique<EffectColorPulse>());
+    effectManager.registerEffect(std::make_unique<EffectColorWipe>());
+    effectManager.registerEffect(std::make_unique<EffectSpectrum3D>());
 
     // Load Lua effects
     loadLuaEffects(effectManager, scriptsDir);

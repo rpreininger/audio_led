@@ -110,6 +110,12 @@ void WebServer::handleClient(int clientSocket) {
         if ((pos = request.find("ftmode=")) != std::string::npos) {
             m_settings.ftMode.store(atoi(request.c_str() + pos + 7) != 0);
         }
+        if ((pos = request.find("modespeed=")) != std::string::npos) {
+            m_settings.modeSpeed.store(atoi(request.c_str() + pos + 10));
+        }
+        if ((pos = request.find("animspeed=")) != std::string::npos) {
+            m_settings.animSpeed.store(atoi(request.c_str() + pos + 10));
+        }
 
         response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSettings updated!";
     }
@@ -126,6 +132,8 @@ void WebServer::handleClient(int clientSocket) {
              << ",\"sensitivity\":" << m_settings.sensitivity.load()
              << ",\"threshold\":" << m_settings.noiseThreshold.load()
              << ",\"duration\":" << m_settings.effectDuration.load()
+             << ",\"modespeed\":" << m_settings.modeSpeed.load()
+             << ",\"animspeed\":" << m_settings.animSpeed.load()
              << ",\"autoloop\":" << (m_settings.autoLoop.load() ? "true" : "false")
              << ",\"ftmode\":" << (m_settings.ftMode.load() ? "true" : "false") << "}";
         response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + json.str();
@@ -226,6 +234,18 @@ std::string WebServer::generateHTML() {
     </div>
 
     <div class="control">
+        <label>Mode Change Speed (seconds)</label>
+        <input type="range" id="modespeed" min="1" max="30" value="4" oninput="update()">
+        <div class="value" id="modespeedVal">4s</div>
+    </div>
+
+    <div class="control">
+        <label>Animation Speed</label>
+        <input type="range" id="animspeed" min="10" max="200" value="100" oninput="update()">
+        <div class="value" id="animspeedVal">100%</div>
+    </div>
+
+    <div class="control">
         <label style="display: inline;">Auto Loop Effects</label>
         <input type="checkbox" id="autoloop" checked onchange="update()" style="width: 24px; height: 24px; margin-left: 10px; vertical-align: middle;">
         <span id="autoloopStatus" style="margin-left: 10px; color: #00d4ff;">ON</span>
@@ -254,17 +274,22 @@ std::string WebServer::generateHTML() {
             var sensitivity = document.getElementById("sensitivity").value;
             var threshold = document.getElementById("threshold").value;
             var duration = document.getElementById("duration").value;
+            var modespeed = document.getElementById("modespeed").value;
+            var animspeed = document.getElementById("animspeed").value;
             var autoloop = document.getElementById("autoloop").checked ? 1 : 0;
 
             document.getElementById("brightnessVal").textContent = brightness;
             document.getElementById("sensitivityVal").textContent = sensitivity + "%";
             document.getElementById("thresholdVal").textContent = (threshold/100).toFixed(2);
             document.getElementById("durationVal").textContent = duration + "s";
+            document.getElementById("modespeedVal").textContent = modespeed + "s";
+            document.getElementById("animspeedVal").textContent = animspeed + "%";
             document.getElementById("autoloopStatus").textContent = autoloop ? "ON" : "OFF";
 
             fetch("/set?effect=" + effect + "&brightness=" + brightness +
                   "&sensitivity=" + sensitivity + "&threshold=" + threshold +
-                  "&duration=" + duration + "&autoloop=" + autoloop + "&ftmode=" + currentFtMode)
+                  "&duration=" + duration + "&modespeed=" + modespeed + "&animspeed=" + animspeed +
+                  "&autoloop=" + autoloop + "&ftmode=" + currentFtMode)
                 .then(r => r.text())
                 .then(t => document.getElementById("status").textContent = t)
                 .catch(e => document.getElementById("status").textContent = "Error: " + e);
@@ -289,11 +314,15 @@ std::string WebServer::generateHTML() {
                 document.getElementById("sensitivity").value = data.sensitivity;
                 document.getElementById("threshold").value = data.threshold * 100;
                 document.getElementById("duration").value = data.duration;
+                document.getElementById("modespeed").value = data.modespeed;
+                document.getElementById("animspeed").value = data.animspeed;
                 document.getElementById("autoloop").checked = data.autoloop;
                 document.getElementById("brightnessVal").textContent = data.brightness;
                 document.getElementById("sensitivityVal").textContent = data.sensitivity + "%";
                 document.getElementById("thresholdVal").textContent = data.threshold.toFixed(2);
                 document.getElementById("durationVal").textContent = data.duration + "s";
+                document.getElementById("modespeedVal").textContent = data.modespeed + "s";
+                document.getElementById("animspeedVal").textContent = data.animspeed + "%";
                 document.getElementById("autoloopStatus").textContent = data.autoloop ? "ON" : "OFF";
                 setMode(data.ftmode ? 1 : 0);
             });
