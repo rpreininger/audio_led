@@ -289,6 +289,12 @@ int main(int argc, char* argv[]) {
     effectManager.registerEffect(std::make_unique<EffectColorWipe>());
     effectManager.registerEffect(std::make_unique<EffectSpectrum3D>());
 
+    // Mark end of builtin effects (for reload)
+    effectManager.markBuiltinEnd();
+
+    // Set scripts directory for reload
+    effectManager.loadLuaEffects(scriptsDir);
+
     // Load Lua effects
     loadLuaEffects(effectManager, scriptsDir);
 
@@ -318,9 +324,10 @@ int main(int argc, char* argv[]) {
     // Set reload callback for Lua hot-reload
     webServer.setReloadCallback([&]() {
         std::cerr << "Reloading Lua effects..." << std::endl;
-        // Note: Full reload would require removing old Lua effects
-        // and reloading them. For now, just reload existing ones.
         effectManager.reloadLuaEffects();
+        // Update web server with new effect names
+        webServer.setEffectNames(effectManager.getEffectNames());
+        std::cerr << "Effect list updated (" << effectManager.getEffectCount() << " effects)" << std::endl;
     });
 
     webServer.start();

@@ -35,9 +35,13 @@ public:
     // Reload Lua effects (hot reload)
     void reloadLuaEffects();
 
+    // Mark where builtin effects end (for reload)
+    void markBuiltinEnd() { m_builtinCount = m_effects.size(); }
+
 private:
     int m_width;
     int m_height;
     std::vector<std::unique_ptr<Effect>> m_effects;
     std::string m_scriptsDir;
+    size_t m_builtinCount = 0;  // Number of C++ builtin effects
 };
