@@ -107,6 +107,9 @@ void WebServer::handleClient(int clientSocket) {
         if ((pos = request.find("autoloop=")) != std::string::npos) {
             m_settings.autoLoop.store(atoi(request.c_str() + pos + 9) != 0);
         }
+        if ((pos = request.find("ftmode=")) != std::string::npos) {
+            m_settings.ftMode.store(atoi(request.c_str() + pos + 7) != 0);
+        }
 
         response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSettings updated!";
     }
@@ -123,7 +126,8 @@ void WebServer::handleClient(int clientSocket) {
              << ",\"sensitivity\":" << m_settings.sensitivity.load()
              << ",\"threshold\":" << m_settings.noiseThreshold.load()
              << ",\"duration\":" << m_settings.effectDuration.load()
-             << ",\"autoloop\":" << (m_settings.autoLoop.load() ? "true" : "false") << "}";
+             << ",\"autoloop\":" << (m_settings.autoLoop.load() ? "true" : "false")
+             << ",\"ftmode\":" << (m_settings.ftMode.load() ? "true" : "false") << "}";
         response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + json.str();
     }
     else {
@@ -141,7 +145,7 @@ std::string WebServer::generateHTML() {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Audio LED Control</title>
+    <title>LED Matrix Control</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto; padding: 10px; background: #1a1a2e; color: #eee; }
@@ -156,11 +160,38 @@ std::string WebServer::generateHTML() {
         button.secondary { background: #0f3460; }
         button.secondary:hover { background: #16213e; }
         .status { text-align: center; padding: 10px; background: #0f3460; border-radius: 5px; margin-top: 10px; }
+        .mode-switch { display: flex; gap: 10px; }
+        .mode-btn { flex: 1; padding: 15px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; transition: all 0.3s; }
+        .mode-btn.active { background: #00d4ff; color: #1a1a2e; font-weight: bold; }
+        .mode-btn:not(.active) { background: #0f3460; color: #fff; }
+        .mode-btn:hover:not(.active) { background: #1a3a5c; }
+        .ft-info { background: #0f3460; padding: 10px; border-radius: 5px; margin-top: 10px; font-size: 14px; text-align: center; }
+        .audio-controls { }
+        .audio-controls.hidden { display: none; }
     </style>
 </head>
 <body>
-    <h1>Audio LED Control</h1>
+    <h1>LED Matrix Control</h1>
 
+    <div class="control">
+        <label>Display Mode</label>
+        <div class="mode-switch">
+            <button class="mode-btn active" id="btnAudio" onclick="setMode(0)">Audio Visualizer</button>
+            <button class="mode-btn" id="btnFT" onclick="setMode(1)">Flaschen-Taschen</button>
+        </div>
+        <div class="ft-info" id="ftInfo" style="display:none;">
+            UDP Server on port 1337<br>
+            Send PPM (P6) images to display
+        </div>
+    </div>
+
+    <div class="control">
+        <label>Brightness</label>
+        <input type="range" id="brightness" min="10" max="255" value="180" oninput="update()">
+        <div class="value" id="brightnessVal">180</div>
+    </div>
+
+    <div class="audio-controls" id="audioControls">
     <div class="control">
         <label>Effect</label>
         <select id="effect" onchange="update()">
@@ -174,12 +205,6 @@ std::string WebServer::generateHTML() {
 
     html << R"HTMLPAGE(
         </select>
-    </div>
-
-    <div class="control">
-        <label>Brightness</label>
-        <input type="range" id="brightness" min="10" max="255" value="180" oninput="update()">
-        <div class="value" id="brightnessVal">180</div>
     </div>
 
     <div class="control">
@@ -207,10 +232,22 @@ std::string WebServer::generateHTML() {
     </div>
 
     <button class="secondary" onclick="reloadLua()">Reload Lua Effects</button>
+    </div>
 
     <div class="status" id="status">Ready</div>
 
     <script>
+        var currentFtMode = 0;
+
+        function setMode(mode) {
+            currentFtMode = mode;
+            document.getElementById("btnAudio").className = mode == 0 ? "mode-btn active" : "mode-btn";
+            document.getElementById("btnFT").className = mode == 1 ? "mode-btn active" : "mode-btn";
+            document.getElementById("ftInfo").style.display = mode == 1 ? "block" : "none";
+            document.getElementById("audioControls").className = mode == 1 ? "audio-controls hidden" : "audio-controls";
+            update();
+        }
+
         function update() {
             var effect = document.getElementById("effect").value;
             var brightness = document.getElementById("brightness").value;
@@ -227,7 +264,7 @@ std::string WebServer::generateHTML() {
 
             fetch("/set?effect=" + effect + "&brightness=" + brightness +
                   "&sensitivity=" + sensitivity + "&threshold=" + threshold +
-                  "&duration=" + duration + "&autoloop=" + autoloop)
+                  "&duration=" + duration + "&autoloop=" + autoloop + "&ftmode=" + currentFtMode)
                 .then(r => r.text())
                 .then(t => document.getElementById("status").textContent = t)
                 .catch(e => document.getElementById("status").textContent = "Error: " + e);
@@ -258,6 +295,7 @@ std::string WebServer::generateHTML() {
                 document.getElementById("thresholdVal").textContent = data.threshold.toFixed(2);
                 document.getElementById("durationVal").textContent = data.duration + "s";
                 document.getElementById("autoloopStatus").textContent = data.autoloop ? "ON" : "OFF";
+                setMode(data.ftmode ? 1 : 0);
             });
     </script>
 </body>

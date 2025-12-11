@@ -9,6 +9,11 @@
 #include <thread>
 #include <csignal>
 #include <dirent.h>
+#include <mutex>
+#include <cstring>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 
 #include "led-matrix.h"
 #include "effect.h"
@@ -31,6 +36,149 @@ static volatile bool g_running = true;
 void signalHandler(int signum) {
     std::cerr << "\nShutting down..." << std::endl;
     g_running = false;
+}
+
+// ====================================================================
+// FLASCHEN-TASCHEN SERVER (UDP PPM receiver on port 1337)
+// ====================================================================
+static const int FT_PORT = 1337;
+static const int FT_WIDTH = 128;
+static const int FT_HEIGHT = 64;
+static uint8_t ftFramebuffer[FT_WIDTH * FT_HEIGHT * 3] = {0};
+static std::mutex ftMutex;
+static std::atomic<bool> ftHasNewFrame{false};
+
+// Parse PPM P6 format from UDP packet
+bool parsePPM(const char* data, int len, int& imgWidth, int& imgHeight, int& offsetX, int& offsetY) {
+    if (len < 10) return false;
+    if (data[0] != 'P' || data[1] != '6') return false;
+
+    int pos = 2;
+    while (pos < len && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r')) pos++;
+
+    offsetX = 0;
+    offsetY = 0;
+    while (pos < len && data[pos] == '#') {
+        if (pos + 4 < len && data[pos+1] == 'F' && data[pos+2] == 'T' && data[pos+3] == ':') {
+            pos += 4;
+            while (pos < len && data[pos] == ' ') pos++;
+            offsetX = 0;
+            while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+                offsetX = offsetX * 10 + (data[pos] - '0');
+                pos++;
+            }
+            while (pos < len && data[pos] == ' ') pos++;
+            offsetY = 0;
+            while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+                offsetY = offsetY * 10 + (data[pos] - '0');
+                pos++;
+            }
+            while (pos < len && data[pos] != '\n') pos++;
+            if (pos < len) pos++;
+        } else {
+            while (pos < len && data[pos] != '\n') pos++;
+            if (pos < len) pos++;
+        }
+    }
+
+    imgWidth = 0;
+    while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+        imgWidth = imgWidth * 10 + (data[pos] - '0');
+        pos++;
+    }
+    while (pos < len && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r')) pos++;
+
+    imgHeight = 0;
+    while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+        imgHeight = imgHeight * 10 + (data[pos] - '0');
+        pos++;
+    }
+    while (pos < len && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r')) pos++;
+
+    int maxval = 0;
+    while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
+        maxval = maxval * 10 + (data[pos] - '0');
+        pos++;
+    }
+    if (pos < len && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r')) pos++;
+
+    if (imgWidth <= 0 || imgHeight <= 0 || imgWidth > 1024 || imgHeight > 1024) return false;
+    if (maxval != 255) return false;
+
+    int expectedBytes = imgWidth * imgHeight * 3;
+    if (pos + expectedBytes > len) return false;
+
+    {
+        std::lock_guard<std::mutex> lock(ftMutex);
+        const uint8_t* pixelData = (const uint8_t*)(data + pos);
+
+        for (int y = 0; y < imgHeight; y++) {
+            int destY = offsetY + y;
+            if (destY < 0 || destY >= FT_HEIGHT) continue;
+
+            for (int x = 0; x < imgWidth; x++) {
+                int destX = offsetX + x;
+                if (destX < 0 || destX >= FT_WIDTH) continue;
+
+                int srcIdx = (y * imgWidth + x) * 3;
+                int dstIdx = (destY * FT_WIDTH + destX) * 3;
+
+                ftFramebuffer[dstIdx + 0] = pixelData[srcIdx + 0];
+                ftFramebuffer[dstIdx + 1] = pixelData[srcIdx + 1];
+                ftFramebuffer[dstIdx + 2] = pixelData[srcIdx + 2];
+            }
+        }
+    }
+    ftHasNewFrame.store(true);
+    return true;
+}
+
+void ftServerThread() {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        std::cerr << "Failed to create FT UDP socket\n";
+        return;
+    }
+
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(FT_PORT);
+
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        std::cerr << "Failed to bind FT server to UDP port " << FT_PORT << "\n";
+        close(sock);
+        return;
+    }
+
+    std::cerr << "Flaschen-Taschen server listening on UDP port " << FT_PORT << "\n";
+
+    char buffer[65536];
+    while (g_running) {
+        struct sockaddr_in clientAddr;
+        socklen_t clientLen = sizeof(clientAddr);
+
+        int received = recvfrom(sock, buffer, sizeof(buffer), 0,
+                                (struct sockaddr*)&clientAddr, &clientLen);
+        if (received > 0) {
+            int w, h, ox, oy;
+            parsePPM(buffer, received, w, h, ox, oy);
+        }
+    }
+    close(sock);
+}
+
+void renderFT(FrameCanvas* canvas) {
+    std::lock_guard<std::mutex> lock(ftMutex);
+    for (int y = 0; y < FT_HEIGHT; y++) {
+        for (int x = 0; x < FT_WIDTH; x++) {
+            int idx = (y * FT_WIDTH + x) * 3;
+            canvas->SetPixel(x, y, ftFramebuffer[idx], ftFramebuffer[idx+1], ftFramebuffer[idx+2]);
+        }
+    }
 }
 
 // Load Lua effects from directory
@@ -147,6 +295,13 @@ int main(int argc, char* argv[]) {
     webServer.start();
 
     // ================================================================
+    // Start Flaschen-Taschen Server
+    // ================================================================
+    std::cerr << "Starting Flaschen-Taschen server..." << std::endl;
+    std::thread ftThread(ftServerThread);
+    ftThread.detach();
+
+    // ================================================================
     // Main Loop
     // ================================================================
     std::cerr << "Starting main loop..." << std::endl;
@@ -162,39 +317,52 @@ int main(int argc, char* argv[]) {
         // Get settings from web server
         WebSettings& settings = webServer.getSettings();
         int brightness = settings.brightness.load();
-        int manualEffect = settings.currentEffect.load();
-        bool autoLoop = settings.autoLoop.load();
-        int duration = settings.effectDuration.load();
+        bool ftModeActive = settings.ftMode.load();
 
-        // Update audio sensitivity
-        audio.setSensitivity(settings.sensitivity.load());
+        // Apply brightness
+        matrix->SetBrightness(brightness * 100 / 255);
 
-        // Get audio data
-        AudioData audioData = audio.getAudioData();
+        Effect* effect = nullptr;
 
-        // Build effect settings
-        EffectSettings effectSettings;
-        effectSettings.brightness = brightness;
-        effectSettings.sensitivity = settings.sensitivity.load();
-        effectSettings.noiseThreshold = settings.noiseThreshold.load();
-
-        // Choose effect
-        int effectId;
-        int effectCount = effectManager.getEffectCount();
-
-        if (manualEffect >= 0 && manualEffect < effectCount) {
-            effectId = manualEffect;
-        } else if (autoLoop && effectCount > 0) {
-            if (duration < 1) duration = 1;
-            effectId = ((int)(timeSec / duration)) % effectCount;
+        if (ftModeActive) {
+            // Flaschen-Taschen mode: render from UDP framebuffer
+            renderFT(canvas);
         } else {
-            effectId = 0;
-        }
+            // Audio visualizer mode
+            int manualEffect = settings.currentEffect.load();
+            bool autoLoop = settings.autoLoop.load();
+            int duration = settings.effectDuration.load();
 
-        // Render effect
-        Effect* effect = effectManager.getEffect(effectId);
-        if (effect) {
-            effect->update(canvas, audioData, effectSettings, timeSec);
+            // Update audio sensitivity
+            audio.setSensitivity(settings.sensitivity.load());
+
+            // Get audio data
+            AudioData audioData = audio.getAudioData();
+
+            // Build effect settings
+            EffectSettings effectSettings;
+            effectSettings.brightness = brightness;
+            effectSettings.sensitivity = settings.sensitivity.load();
+            effectSettings.noiseThreshold = settings.noiseThreshold.load();
+
+            // Choose effect
+            int effectId;
+            int effectCount = effectManager.getEffectCount();
+
+            if (manualEffect >= 0 && manualEffect < effectCount) {
+                effectId = manualEffect;
+            } else if (autoLoop && effectCount > 0) {
+                if (duration < 1) duration = 1;
+                effectId = ((int)(timeSec / duration)) % effectCount;
+            } else {
+                effectId = 0;
+            }
+
+            // Render effect
+            effect = effectManager.getEffect(effectId);
+            if (effect) {
+                effect->update(canvas, audioData, effectSettings, timeSec);
+            }
         }
 
         // Swap buffers
@@ -207,8 +375,8 @@ int main(int argc, char* argv[]) {
         frameCount++;
         if (frameCount % 500 == 0) {
             std::cerr << "FPS: ~" << (frameCount / timeSec)
-                      << " Effect: " << (effect ? effect->getName() : "none")
-                      << " Vol: " << audioData.volume << std::endl;
+                      << " Mode: " << (ftModeActive ? "FT" : (effect ? effect->getName() : "none"))
+                      << std::endl;
         }
     }
 

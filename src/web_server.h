@@ -16,6 +16,7 @@ struct WebSettings {
     std::atomic<int> effectDuration{5};
     std::atomic<int> currentEffect{-1};  // -1 = auto
     std::atomic<bool> autoLoop{true};
+    std::atomic<bool> ftMode{false};     // false = audio visualizer, true = Flaschen-Taschen
 };
 
 class WebServer {

@@ -83,9 +83,15 @@ include_directories(
     ${LUA_INCLUDE_DIRS}
 )
 
-# Link directories
+# Link directories - select based on target architecture
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    set(LIBS_ARCH_DIR ${CMAKE_SOURCE_DIR}/libs/aarch64)
+else()
+    set(LIBS_ARCH_DIR ${CMAKE_SOURCE_DIR}/libs/arm)
+endif()
+
 link_directories(
-    ${CMAKE_SOURCE_DIR}/libs/arm
+    ${LIBS_ARCH_DIR}
     ${RGB_MATRIX_PATH}/lib
 )
 
