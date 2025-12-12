@@ -1,116 +1,199 @@
 -- ====================================================================
--- PACMAN EFFECT - Lua scripted effect
--- Audio-reactive Pacman with ghosts
+-- PACMAN - Classic Arcade LED Effect
+-- Autonomous AI-controlled Pac-Man maze game visualization
 -- ====================================================================
 
-effect_name = "Pacman (Lua)"
-effect_description = "Pacman and ghosts react to audio"
+effect_name = "Pacman"
+effect_description = "AI Pac-Man navigating maze with ghosts"
 
--- Pacman state
-local pacX = 0
-local pacDir = 1  -- 1 = right, -1 = left
-local mouthAngle = 0
-local mouthOpen = true
+local TILE_SIZE   = 4
+local MAZE_W      = 32
+local MAZE_H      = 16
 
--- Ghost positions and colors
-local ghosts = {
-    {x = 100, color = {1, 0, 0}},      -- Red (Blinky)
-    {x = 85, color = {1, 0.5, 1}},     -- Pink (Pinky)
-    {x = 70, color = {0, 1, 1}},       -- Cyan (Inky)
-    {x = 55, color = {1, 0.5, 0}}      -- Orange (Clyde)
+-- Compatibility for old/new Lua versions
+local unpack = table.unpack or unpack
+local atan2  = math.atan2 or function(y,x) return math.atan(y,x) end
+
+---------------------------------------------------------
+-- Maze definition
+---------------------------------------------------------
+
+local mazeRows = {}
+local mazeTemplate = {
+    "################################",
+    "#............##............#####",
+    "#.######.####.##.####.######.###",
+    "#o######.####.##.####.######o###",
+    "#.######.####.##.####.######.###",
+    "#.............................##",
+    "####.##.######G#H#I#J#.##.######",
+    "####.##....#######....##.#######",
+    "####.######.#####.######.#######",
+    "####.######.#####.######.#######",
+    "#..P.........##............#####",
+    "#.######.####.##.####.######.###",
+    "#o....#................#....o###",
+    "######.#.############.#.########",
+    "#......#....######....#......###",
+    "################################"
 }
 
--- Dots
-local dots = {}
-local dotSpacing = 8
+local function getTile(tx,ty)
+    if tx < 0 or tx >= MAZE_W or ty < 0 or ty >= MAZE_H then
+        return "#"
+    end
+    local row = mazeRows[ty+1]
+    return row:sub(tx+1, tx+1)
+end
 
-function init(width, height)
-    pacX = 10
-    -- Initialize dots
-    dots = {}
-    for x = 4, WIDTH - 4, dotSpacing do
-        table.insert(dots, {x = x, eaten = false})
+local function isWall(tx,ty)
+    return getTile(tx,ty) == "#"
+end
+
+---------------------------------------------------------
+-- Pellets
+---------------------------------------------------------
+
+local pellets     = {}
+local powerPellet = {}
+
+local function initPellets()
+    pellets     = {}
+    powerPellet = {}
+
+    for ty = 0, MAZE_H-1 do
+        pellets[ty]     = {}
+        powerPellet[ty] = {}
+
+        local row = mazeRows[ty+1]
+        for tx = 0, MAZE_W-1 do
+            local c = row:sub(tx+1, tx+1)
+            pellets[ty][tx]     = (c == "." or c == "o")
+            powerPellet[ty][tx] = (c == "o")
+        end
     end
 end
 
-function reset()
-    init(WIDTH, HEIGHT)
+local function eatPelletAt(tx,ty)
+    if pellets[ty] and pellets[ty][tx] then
+        local wasPower = powerPellet[ty][tx] or false
+        pellets[ty][tx]     = false
+        powerPellet[ty][tx] = false
+        return wasPower
+    end
+    return false
 end
 
--- Draw Pacman (yellow circle with mouth)
-function drawPacman(cx, cy, radius, mouthDeg, direction)
-    local startAngle = mouthDeg / 2
-    local endAngle = 360 - mouthDeg / 2
-
-    if direction < 0 then
-        -- Facing left
-        startAngle = 180 + mouthDeg / 2
-        endAngle = 180 - mouthDeg / 2 + 360
-    end
-
-    for y = cy - radius, cy + radius do
-        for x = cx - radius, cx + radius do
-            local dx = x - cx
-            local dy = y - cy
-            local dist = math.sqrt(dx * dx + dy * dy)
-
-            if dist <= radius then
-                -- Check if in mouth area
-                local angle = math.deg(math.atan(dy, dx))
-                if angle < 0 then angle = angle + 360 end
-
-                local inMouth = false
-                if direction > 0 then
-                    inMouth = angle < startAngle or angle > endAngle
-                else
-                    inMouth = angle > startAngle and angle < endAngle
+local function drawMazeWalls()
+    local r,g,b = 0,70,255
+    for ty = 0, MAZE_H-1 do
+        local row = mazeRows[ty+1]
+        for tx = 0, MAZE_W-1 do
+            if row:sub(tx+1,tx+1) == "#" then
+                local x0 = tx*TILE_SIZE
+                local y0 = ty*TILE_SIZE
+                for yy = 0, TILE_SIZE-1 do
+                    for xx = 0, TILE_SIZE-1 do
+                        setPixel(x0+xx, y0+yy, r,g,b)
+                    end
                 end
+            end
+        end
+    end
+end
 
-                if not inMouth and x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT then
-                    setPixelHSV(math.floor(x), math.floor(y), 60, 1, 1)  -- Yellow
+local function drawPellets()
+    for ty=0,MAZE_H-1 do
+        for tx=0,MAZE_W-1 do
+            if pellets[ty][tx] then
+                local x = tx*TILE_SIZE + TILE_SIZE/2
+                local y = ty*TILE_SIZE + TILE_SIZE/2
+                if powerPellet[ty][tx] then
+                    setPixel(math.floor(x), math.floor(y), 248,184,0)
+                    setPixel(math.floor(x+1), math.floor(y), 248,184,0)
+                else
+                    setPixel(math.floor(x), math.floor(y), 248,184,0)
+                end
+            end
+        end
+    end
+end
+
+---------------------------------------------------------
+-- Entities
+---------------------------------------------------------
+local pac = {
+    tx = 1, ty = 1,
+    x  = 0, y  = 0,
+    dx = 1, dy = 0,
+    speed = 40,
+    mouthPhase = 0,
+    radius = 6
+}
+
+local ghosts = {}
+local scaredTimer = 0
+local lastTime = 0
+
+---------------------------------------------------------
+-- Draw Pac-Man (4-direction mouth)
+---------------------------------------------------------
+
+local function drawPacman(cx,cy,radius,mouthDeg,dx,dy)
+    for y = cy-radius, cy+radius do
+        for x = cx-radius, cx+radius do
+            local lx = x-cx
+            local ly = y-cy
+            local dist = math.sqrt(lx*lx + ly*ly)
+            if dist <= radius then
+                local angle = math.deg(atan2(ly, lx))
+
+                if dx== 1 then angle = angle
+                elseif dx==-1 then angle = angle + 180
+                elseif dy==-1 then angle = angle - 90
+                elseif dy== 1 then angle = angle + 90 end
+
+                if angle > 180 then angle = angle - 360 end
+                if angle < -180 then angle = angle + 360 end
+
+                local inMouth = math.abs(angle) < mouthDeg/2
+                if not inMouth then
+                    setPixel(math.floor(x), math.floor(y), 255,255,0)
                 end
             end
         end
     end
 
     -- Eye
-    local eyeX = cx + direction * 3
-    local eyeY = cy - radius / 2
-    if eyeX >= 0 and eyeX < WIDTH and eyeY >= 0 and eyeY < HEIGHT then
-        setPixel(math.floor(eyeX), math.floor(eyeY), 0, 0, 0)
-    end
+    local ex,ey = cx,cy
+    if dx==1 then ex,ey = cx,cy-2
+    elseif dx==-1 then ex,ey = cx,cy-2
+    elseif dy==-1 then ex,ey = cx-2,cy
+    elseif dy==1 then ex,ey = cx-2,cy end
+    setPixel(math.floor(ex), math.floor(ey), 0,0,0)
 end
 
+---------------------------------------------------------
 -- Draw Ghost
-function drawGhost(cx, cy, radius, r, g, b, scared)
-    -- Body (rounded top, wavy bottom)
-    for y = cy - radius, cy + radius do
-        for x = cx - radius, cx + radius do
+---------------------------------------------------------
+local function drawGhost(cx,cy,radius,col,scared)
+    local r,g,b = col[1],col[2],col[3]
+    if scared then r,g,b = 0,0,255 end
+
+    for y = cy-radius, cy+radius do
+        for x = cx-radius, cx+radius do
             local dx = x - cx
             local dy = y - cy
 
-            -- Top half is circular
-            if dy < 0 then
-                local dist = math.sqrt(dx * dx + dy * dy)
-                if dist <= radius and x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT then
-                    if scared then
-                        setPixel(math.floor(x), math.floor(y), 0, 0, 200)  -- Blue when scared
-                    else
-                        setPixel(math.floor(x), math.floor(y),
-                                math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
-                    end
+            if dy <= 0 then
+                if math.sqrt(dx*dx + dy*dy) <= radius then
+                    setPixel(math.floor(x), math.floor(y), r,g,b)
                 end
             else
-                -- Bottom half is rectangular with wavy edge
-                if math.abs(dx) <= radius then
-                    local waveOffset = math.floor(math.sin((x + cy) * 0.5) * 2)
-                    if dy <= radius + waveOffset and x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT then
-                        if scared then
-                            setPixel(math.floor(x), math.floor(y), 0, 0, 200)
-                        else
-                            setPixel(math.floor(x), math.floor(y),
-                                    math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
-                        end
+                if math.abs(dx) <= radius-1 then
+                    local wave = math.floor(math.sin((x+cy)*0.5)*2)
+                    if dy <= radius + wave then
+                        setPixel(math.floor(x), math.floor(y), r,g,b)
                     end
                 end
             end
@@ -118,89 +201,219 @@ function drawGhost(cx, cy, radius, r, g, b, scared)
     end
 
     -- Eyes
-    local eyeOffsets = {-3, 3}
-    for _, ox in ipairs(eyeOffsets) do
-        local ex = cx + ox
-        local ey = cy - 2
-        if ex >= 0 and ex < WIDTH and ey >= 0 and ey < HEIGHT then
-            setPixel(math.floor(ex), math.floor(ey), 255, 255, 255)
-            setPixel(math.floor(ex + 1), math.floor(ey), 0, 0, 0)
-        end
+    for _,ox in ipairs({-3,3}) do
+        setPixel(math.floor(cx+ox), math.floor(cy-2), 255,255,255)
+        setPixel(math.floor(cx+ox+1), math.floor(cy-2), 0,0,0)
     end
 end
 
-function update(audio, settings, time)
-    clear()
+---------------------------------------------------------
+-- Parse Maze for Pac-Man & Ghost locations
+---------------------------------------------------------
+local function parseMaze()
+    local ghostColors = {
+        G = {255,0,0},
+        H = {255,128,255},
+        I = {0,255,255},
+        J = {255,160,0}
+    }
 
-    local beat = audio.beat or 0
-    local vol = audio.volume or 0
-    local bass = audio.bass or 0
+    ghosts = {}
 
-    -- Draw dots (small yellow circles)
-    local cy = HEIGHT / 2
-    for _, dot in ipairs(dots) do
-        if not dot.eaten then
-            local dx = math.abs(dot.x - pacX)
-            if dx < 6 then
-                dot.eaten = true
-            else
-                setPixelHSV(math.floor(dot.x), math.floor(cy), 60, 1, 0.8)
-                setPixelHSV(math.floor(dot.x), math.floor(cy - 1), 60, 1, 0.8)
+    for ty=0,MAZE_H-1 do
+        local row = mazeRows[ty+1]
+        local bytes = {row:byte(1,#row)}
+
+        for tx=0,MAZE_W-1 do
+            local ch = row:sub(tx+1,tx+1)
+
+            if ch == "P" then
+                pac.tx,pac.ty = tx,ty
+                pac.x = tx*TILE_SIZE + TILE_SIZE/2
+                pac.y = ty*TILE_SIZE + TILE_SIZE/2
+                bytes[tx+1] = string.byte(".")
+
+            elseif ghostColors[ch] then
+                table.insert(ghosts,{
+                    tx = tx, ty = ty,
+                    x  = tx*TILE_SIZE + TILE_SIZE/2,
+                    y  = ty*TILE_SIZE + TILE_SIZE/2,
+                    dx = 0, dy = -1,
+                    speed = 30,
+                    color = ghostColors[ch]
+                })
+                bytes[tx+1] = string.byte(".")
+            end
+        end
+
+        mazeRows[ty+1] = string.char(unpack(bytes))
+    end
+end
+
+---------------------------------------------------------
+-- Movement helpers
+---------------------------------------------------------
+local dirs = {
+    {dx= 1, dy= 0},
+    {dx=-1, dy= 0},
+    {dx= 0, dy= 1},
+    {dx= 0, dy=-1},
+}
+
+local function tileCenter(tx,ty)
+    return tx*TILE_SIZE + TILE_SIZE/2,
+           ty*TILE_SIZE + TILE_SIZE/2
+end
+
+local function canMoveTo(tx,ty)
+    return not isWall(tx,ty)
+end
+
+---------------------------------------------------------
+-- Pac-Man movement
+---------------------------------------------------------
+local function choosePacDirection()
+    local candidates={}
+
+    for _,d in ipairs(dirs) do
+        local nx,ny = pac.tx+d.dx, pac.ty+d.dy
+        if canMoveTo(nx,ny) then
+            table.insert(candidates,d)
+        end
+    end
+
+    if #candidates==0 then return end
+
+    -- Prefer keeping direction if possible
+    for _,d in ipairs(candidates) do
+        if d.dx==pac.dx and d.dy==pac.dy then
+            return
+        end
+    end
+
+    local chosen = candidates[math.random(#candidates)]
+    pac.dx,pac.dy = chosen.dx,chosen.dy
+end
+
+local function updatePac(dt)
+    local cx,cy = tileCenter(pac.tx,pac.ty)
+    local dist = math.abs(pac.x-cx)+math.abs(pac.y-cy)
+
+    if dist < 1 then
+        pac.x,pac.y = cx,cy
+        choosePacDirection()
+
+        if eatPelletAt(pac.tx,pac.ty) then
+            scaredTimer = 6
+        end
+    end
+
+    pac.x = pac.x + pac.dx * pac.speed * dt
+    pac.y = pac.y + pac.dy * pac.speed * dt
+
+    pac.tx = math.floor(pac.x/TILE_SIZE)
+    pac.ty = math.floor(pac.y/TILE_SIZE)
+end
+
+---------------------------------------------------------
+-- Ghost movement
+---------------------------------------------------------
+local function chooseGhostDirection(g)
+    local best, bestScore=nil,1e9
+
+    for _,d in ipairs(dirs) do
+        local nx,ny = g.tx+d.dx, g.ty+d.dy
+        if canMoveTo(nx,ny) then
+            local score = math.abs(nx-pac.tx)+math.abs(ny-pac.ty)
+            if d.dx == -g.dx and d.dy == -g.dy then
+                score = score + 1
+            end
+            if score < bestScore then
+                bestScore, best = score, d
             end
         end
     end
 
-    -- Move Pacman based on volume
-    local speed = 0.3 + vol * 1.5
-    pacX = pacX + speed * pacDir
+    if best then
+        g.dx,g.dy = best.dx,best.dy
+    else
+        g.dx,g.dy = -g.dx,-g.dy
+    end
+end
 
-    -- Bounce at edges
-    if pacX > WIDTH - 10 then
-        pacDir = -1
-        -- Reset dots when reaching edge
-        for _, dot in ipairs(dots) do
-            dot.eaten = false
-        end
-    elseif pacX < 10 then
-        pacDir = 1
-        for _, dot in ipairs(dots) do
-            dot.eaten = false
-        end
+local function updateGhost(g,dt)
+    local cx,cy = tileCenter(g.tx,g.ty)
+    local dist = math.abs(g.x-cx)+math.abs(g.y-cy)
+
+    if dist < 1 then
+        g.x,g.y = cx,cy
+        chooseGhostDirection(g)
     end
 
-    -- Animate mouth based on beat
-    local mouthDeg = 10 + beat * 50
-    if mouthDeg > 60 then mouthDeg = 60 end
+    local speedMul = scaredTimer>0 and 0.6 or 1
+    g.x = g.x + g.dx*g.speed*speedMul*dt
+    g.y = g.y + g.dy*g.speed*speedMul*dt
 
-    -- Pacman size reacts to bass
-    local pacRadius = 8 + bass * 5
-    if pacRadius > 15 then pacRadius = 15 end
+    g.tx = math.floor(g.x/TILE_SIZE)
+    g.ty = math.floor(g.y/TILE_SIZE)
+end
 
-    -- Draw Pacman
-    drawPacman(pacX, cy, pacRadius, mouthDeg, pacDir)
+---------------------------------------------------------
+-- Effect API
+---------------------------------------------------------
 
-    -- Update and draw ghosts
-    local scared = beat > 0.5  -- Ghosts scared on strong beats
+function init(width, height)
+    -- Reset maze from template
+    mazeRows = {}
+    for i, row in ipairs(mazeTemplate) do
+        mazeRows[i] = row
+    end
 
-    for i, ghost in ipairs(ghosts) do
-        -- Ghosts follow Pacman with delay, speed based on spectrum
-        local targetX = pacX - pacDir * (20 + i * 15)
-        local ghostSpeed = 0.1 + (audio.spectrum[i] or 0) * 0.3
+    pac = {
+        tx = 1, ty = 1,
+        x  = 0, y  = 0,
+        dx = 1, dy = 0,
+        speed = 40,
+        mouthPhase = 0,
+        radius = 6
+    }
+    ghosts = {}
+    scaredTimer = 0
+    lastTime = 0
 
-        if ghost.x < targetX then
-            ghost.x = ghost.x + ghostSpeed
-        else
-            ghost.x = ghost.x - ghostSpeed
-        end
+    parseMaze()
+    initPellets()
+end
 
-        -- Keep ghosts on screen
-        if ghost.x < 10 then ghost.x = 10 end
-        if ghost.x > WIDTH - 10 then ghost.x = WIDTH - 10 end
+function reset()
+    init(WIDTH, HEIGHT)
+end
 
-        -- Ghost size reacts to its spectrum band
-        local ghostRadius = 6 + (audio.spectrum[i + 4] or 0) * 3
-        if ghostRadius > 10 then ghostRadius = 10 end
+function update(audio, settings, time)
+    local dt = time - lastTime
+    if dt <= 0 or dt > 0.1 then dt = 0.016 end
+    lastTime = time
 
-        drawGhost(ghost.x, cy, ghostRadius, ghost.color[1], ghost.color[2], ghost.color[3], scared)
+    clear()
+
+    pac.speed = 40
+    pac.mouthPhase = pac.mouthPhase + dt * 8
+    local mouthDeg = 30 + 25*math.abs(math.sin(pac.mouthPhase))
+
+    if scaredTimer > 0 then
+        scaredTimer = scaredTimer - dt
+        if scaredTimer < 0 then scaredTimer = 0 end
+    end
+    local scared = (scaredTimer > 0)
+
+    updatePac(dt)
+    for _,g in ipairs(ghosts) do updateGhost(g,dt) end
+
+    drawMazeWalls()
+    drawPellets()
+    drawPacman(pac.x, pac.y, pac.radius, mouthDeg, pac.dx, pac.dy)
+
+    for _,g in ipairs(ghosts) do
+        drawGhost(g.x, g.y, 6, g.color, scared)
     end
 end
