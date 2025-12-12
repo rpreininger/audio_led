@@ -125,6 +125,13 @@ void WebServer::handleClient(int clientSocket) {
         }
         response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nLua effects reloaded!";
     }
+    else if (request.find("GET /poweroff") != std::string::npos) {
+        response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nShutting down...";
+        write(clientSocket, response.c_str(), response.length());
+        close(clientSocket);
+        system("sudo poweroff");
+        return;
+    }
     else if (request.find("GET /status") != std::string::npos) {
         std::ostringstream json;
         json << "{\"effect\":" << m_settings.currentEffect.load()
@@ -167,6 +174,8 @@ std::string WebServer::generateHTML() {
         button:hover { background: #ff6b6b; }
         button.secondary { background: #0f3460; }
         button.secondary:hover { background: #16213e; }
+        button.danger { background: #8b0000; }
+        button.danger:hover { background: #b22222; }
         .status { text-align: center; padding: 10px; background: #0f3460; border-radius: 5px; margin-top: 10px; }
         .mode-switch { display: flex; gap: 10px; }
         .mode-btn { flex: 1; padding: 15px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; transition: all 0.3s; }
@@ -254,6 +263,8 @@ std::string WebServer::generateHTML() {
     <button class="secondary" onclick="reloadLua()">Reload Lua Effects</button>
     </div>
 
+    <button class="danger" onclick="powerOff()">Power Off Panel</button>
+
     <div class="status" id="status">Ready</div>
 
     <script>
@@ -303,6 +314,16 @@ std::string WebServer::generateHTML() {
                     setTimeout(() => location.reload(), 1000);
                 })
                 .catch(e => document.getElementById("status").textContent = "Error: " + e);
+        }
+
+        function powerOff() {
+            if (confirm("Are you sure you want to shut down the LED panel?")) {
+                document.getElementById("status").textContent = "Shutting down...";
+                fetch("/poweroff")
+                    .then(r => r.text())
+                    .then(t => document.getElementById("status").textContent = t)
+                    .catch(e => document.getElementById("status").textContent = "Shutdown initiated");
+            }
         }
 
         // Load current values on page load
