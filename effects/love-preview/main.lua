@@ -171,7 +171,8 @@ local function loadEffects()
             "dancing_bars.lua",
             "fireblast.lua",
             "pacman.lua",
-            "jumpnrun.lua"
+            "jumpnrun.lua",
+            "whacatourist.lua"
         }
     end
 

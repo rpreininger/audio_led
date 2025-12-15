@@ -45,7 +45,18 @@ function update(audio, settings, time)
     local cx = WIDTH / 2
     local cy = HEIGHT / 2
 
-    fillCircle(cx, cy, radius, 1, 0.5, 0.5)
+    -- Manual filled circle (fillCircle doesn't exist in API)
+    for dy = -radius, radius do
+        for dx = -radius, radius do
+            if dx * dx + dy * dy <= radius * radius then
+                local x = math.floor(cx + dx)
+                local y = math.floor(cy + dy)
+                if x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT then
+                    setPixelHSV(x, y, hue, 1, 0.5)
+                end
+            end
+        end
+    end
 
     -- Draw outer ring with HSV color
     local ringRadius = radius + 3 + audio.beat * 5
