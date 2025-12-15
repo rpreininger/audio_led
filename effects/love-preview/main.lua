@@ -158,6 +158,7 @@ local function loadEffects()
     if #files == 0 then
         -- Fallback: hardcode known effects
         files = {
+            "colortest.lua",
             "spacewalk.lua",
             "rainbow_bars.lua",
             "bass_pulse.lua",

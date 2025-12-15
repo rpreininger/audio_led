@@ -4,6 +4,7 @@
 #include "lua_effect.h"
 #include "led-matrix.h"
 #include <lua.hpp>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -254,16 +255,16 @@ static void hsvToRgb(float h, float s, float v, int& r, int& g, int& b) {
     b = static_cast<int>((b1 + m) * 255);
 }
 
-// Lua API: setPixel(x, y, r, g, b)
+// Lua API: setPixel(x, y, r, g, b) - colors in 0-255 range
 int LuaEffect::lua_setPixel(lua_State* L) {
     LuaEffect* effect = getEffect(L);
     if (!effect) return 0;
 
     int x = luaL_checkinteger(L, 1);
     int y = luaL_checkinteger(L, 2);
-    int r = static_cast<int>(luaL_checknumber(L, 3) * 255);
-    int g = static_cast<int>(luaL_checknumber(L, 4) * 255);
-    int b = static_cast<int>(luaL_checknumber(L, 5) * 255);
+    int r = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 3))));
+    int g = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 4))));
+    int b = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 5))));
 
     if (x >= 0 && x < effect->m_width && y >= 0 && y < effect->m_height) {
         effect->m_framebuffer[x][y][0] = r;
@@ -295,16 +296,16 @@ int LuaEffect::lua_setPixelHSV(lua_State* L) {
     return 0;
 }
 
-// Lua API: clear(r, g, b) or clear()
+// Lua API: clear(r, g, b) or clear() - colors in 0-255 range
 int LuaEffect::lua_clear(lua_State* L) {
     LuaEffect* effect = getEffect(L);
     if (!effect) return 0;
 
     int r = 0, g = 0, b = 0;
     if (lua_gettop(L) >= 3) {
-        r = static_cast<int>(luaL_checknumber(L, 1) * 255);
-        g = static_cast<int>(luaL_checknumber(L, 2) * 255);
-        b = static_cast<int>(luaL_checknumber(L, 3) * 255);
+        r = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 1))));
+        g = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 2))));
+        b = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 3))));
     }
 
     for (int y = 0; y < effect->m_height; y++) {
@@ -317,7 +318,7 @@ int LuaEffect::lua_clear(lua_State* L) {
     return 0;
 }
 
-// Lua API: drawLine(x1, y1, x2, y2, r, g, b)
+// Lua API: drawLine(x1, y1, x2, y2, r, g, b) - colors in 0-255 range
 int LuaEffect::lua_drawLine(lua_State* L) {
     LuaEffect* effect = getEffect(L);
     if (!effect) return 0;
@@ -326,9 +327,9 @@ int LuaEffect::lua_drawLine(lua_State* L) {
     int y1 = luaL_checkinteger(L, 2);
     int x2 = luaL_checkinteger(L, 3);
     int y2 = luaL_checkinteger(L, 4);
-    int r = static_cast<int>(luaL_checknumber(L, 5) * 255);
-    int g = static_cast<int>(luaL_checknumber(L, 6) * 255);
-    int b = static_cast<int>(luaL_checknumber(L, 7) * 255);
+    int r = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 5))));
+    int g = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 6))));
+    int b = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 7))));
 
     // Bresenham's line algorithm
     int dx = abs(x2 - x1);
@@ -353,7 +354,7 @@ int LuaEffect::lua_drawLine(lua_State* L) {
     return 0;
 }
 
-// Lua API: drawRect(x, y, w, h, r, g, b)
+// Lua API: drawRect(x, y, w, h, r, g, b) - colors in 0-255 range
 int LuaEffect::lua_drawRect(lua_State* L) {
     LuaEffect* effect = getEffect(L);
     if (!effect) return 0;
@@ -362,9 +363,9 @@ int LuaEffect::lua_drawRect(lua_State* L) {
     int y = luaL_checkinteger(L, 2);
     int w = luaL_checkinteger(L, 3);
     int h = luaL_checkinteger(L, 4);
-    int r = static_cast<int>(luaL_checknumber(L, 5) * 255);
-    int g = static_cast<int>(luaL_checknumber(L, 6) * 255);
-    int b = static_cast<int>(luaL_checknumber(L, 7) * 255);
+    int r = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 5))));
+    int g = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 6))));
+    int b = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 7))));
 
     // Draw outline
     for (int i = x; i < x + w; i++) {
@@ -398,7 +399,7 @@ int LuaEffect::lua_drawRect(lua_State* L) {
     return 0;
 }
 
-// Lua API: fillRect(x, y, w, h, r, g, b)
+// Lua API: fillRect(x, y, w, h, r, g, b) - colors in 0-255 range
 int LuaEffect::lua_fillRect(lua_State* L) {
     LuaEffect* effect = getEffect(L);
     if (!effect) return 0;
@@ -407,9 +408,9 @@ int LuaEffect::lua_fillRect(lua_State* L) {
     int y = luaL_checkinteger(L, 2);
     int w = luaL_checkinteger(L, 3);
     int h = luaL_checkinteger(L, 4);
-    int r = static_cast<int>(luaL_checknumber(L, 5) * 255);
-    int g = static_cast<int>(luaL_checknumber(L, 6) * 255);
-    int b = static_cast<int>(luaL_checknumber(L, 7) * 255);
+    int r = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 5))));
+    int g = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 6))));
+    int b = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 7))));
 
     for (int j = y; j < y + h; j++) {
         for (int i = x; i < x + w; i++) {
@@ -423,7 +424,7 @@ int LuaEffect::lua_fillRect(lua_State* L) {
     return 0;
 }
 
-// Lua API: drawCircle(cx, cy, radius, r, g, b)
+// Lua API: drawCircle(cx, cy, radius, r, g, b) - colors in 0-255 range
 int LuaEffect::lua_drawCircle(lua_State* L) {
     LuaEffect* effect = getEffect(L);
     if (!effect) return 0;
@@ -431,9 +432,9 @@ int LuaEffect::lua_drawCircle(lua_State* L) {
     int cx = luaL_checkinteger(L, 1);
     int cy = luaL_checkinteger(L, 2);
     int radius = luaL_checkinteger(L, 3);
-    int r = static_cast<int>(luaL_checknumber(L, 4) * 255);
-    int g = static_cast<int>(luaL_checknumber(L, 5) * 255);
-    int b = static_cast<int>(luaL_checknumber(L, 6) * 255);
+    int r = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 4))));
+    int g = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 5))));
+    int b = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 6))));
 
     // Midpoint circle algorithm
     int x = radius;
@@ -470,7 +471,7 @@ int LuaEffect::lua_drawCircle(lua_State* L) {
     return 0;
 }
 
-// Lua API: fillCircle(cx, cy, radius, r, g, b)
+// Lua API: fillCircle(cx, cy, radius, r, g, b) - colors in 0-255 range
 int LuaEffect::lua_fillCircle(lua_State* L) {
     LuaEffect* effect = getEffect(L);
     if (!effect) return 0;
@@ -478,9 +479,9 @@ int LuaEffect::lua_fillCircle(lua_State* L) {
     int cx = luaL_checkinteger(L, 1);
     int cy = luaL_checkinteger(L, 2);
     int radius = luaL_checkinteger(L, 3);
-    int r = static_cast<int>(luaL_checknumber(L, 4) * 255);
-    int g = static_cast<int>(luaL_checknumber(L, 5) * 255);
-    int b = static_cast<int>(luaL_checknumber(L, 6) * 255);
+    int r = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 4))));
+    int g = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 5))));
+    int b = std::max(0, std::min(255, static_cast<int>(luaL_checknumber(L, 6))));
 
     int r2 = radius * radius;
     for (int dy = -radius; dy <= radius; dy++) {
