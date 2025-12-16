@@ -27,7 +27,7 @@ function update(audio, settings, time)
     clear()
 
     local vol = audio.volume or 0
-    local beat = audio.beat or 0
+    local beat = audio.beat and 1 or 0
 
     hue = hue + 0.3 + beat * 2
     if hue >= 360 then hue = hue - 360 end

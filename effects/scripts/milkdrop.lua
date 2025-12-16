@@ -38,7 +38,7 @@ end
 
 function update(audio, settings, time_param)
     local vol = audio.volume or 0
-    local beat = audio.beat or 0
+    local beat = audio.beat and 1 or 0
     local bass = audio.bass or 0
     local mid = audio.mid or 0
     local treble = audio.treble or 0

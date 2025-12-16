@@ -163,20 +163,28 @@ void AudioCapture::captureThread() {
         }
         kiss_fft(cfg, in, out);
 
-        // 8-band spectrum
+        // 8-band spectrum with logarithmic distribution and weighting
         float spectrum[8];
         int halfN = N / 2;
-        int bandSize = halfN / 8;
+
+        // Logarithmic band boundaries for more musical distribution
+        // Lower bands get fewer bins, higher bands get more
+        const int bandBounds[9] = {1, 4, 8, 16, 32, 64, 128, 256, halfN};
+
+        // Per-band weighting to balance bass-heavy content
+        // Attenuate bass, boost treble for visual balance
+        const float bandWeights[8] = {0.35f, 0.5f, 0.7f, 0.85f, 1.0f, 1.4f, 1.8f, 2.2f};
 
         for (int b = 0; b < 8; b++) {
             float energy = 0;
-            int start = bandSize * b;
-            int end = start + bandSize;
+            int start = bandBounds[b];
+            int end = bandBounds[b + 1];
+            int count = end - start;
 
-            for (int i = start; i < end; i++) {
+            for (int i = start; i < end && i < halfN; i++) {
                 energy += sqrt(out[i].r * out[i].r + out[i].i * out[i].i);
             }
-            spectrum[b] = (energy / bandSize) * sensitivity;
+            spectrum[b] = (energy / count) * sensitivity * bandWeights[b];
         }
 
         // Bass, mid, treble

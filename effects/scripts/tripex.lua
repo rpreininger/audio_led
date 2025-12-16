@@ -23,7 +23,7 @@ function update(audio, settings, time)
     clear()
 
     local vol = audio.volume or 0
-    local beat = audio.beat or 0
+    local beat = audio.beat and 1 or 0
     local bass = audio.bass or 0
 
     if vol < settings.noiseThreshold then vol = 0 end
