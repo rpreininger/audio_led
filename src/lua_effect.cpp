@@ -27,8 +27,9 @@ LuaEffect::LuaEffect(const std::string& scriptPath)
 
     m_description = "Lua script: " + m_name;
 
-    // Clear framebuffer
+    // Clear framebuffers
     memset(m_framebuffer, 0, sizeof(m_framebuffer));
+    memset(m_linearBuffer, 0, sizeof(m_linearBuffer));
 }
 
 LuaEffect::~LuaEffect() {
@@ -227,6 +228,12 @@ void LuaEffect::copyToCanvas(rgb_matrix::FrameCanvas* canvas, int brightness) {
             int g = static_cast<int>(m_framebuffer[x][y][1] * scale);
             int b = static_cast<int>(m_framebuffer[x][y][2] * scale);
             canvas->SetPixel(x, y, r, g, b);
+
+            // Also copy to linear buffer for FT sending
+            int idx = (y * m_width + x) * 3;
+            m_linearBuffer[idx] = r;
+            m_linearBuffer[idx + 1] = g;
+            m_linearBuffer[idx + 2] = b;
         }
     }
 }

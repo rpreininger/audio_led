@@ -53,7 +53,7 @@ public:
         // Fill entire screen
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, pr, pg, pb);
+                setPixel(canvas,x, y, pr, pg, pb);
             }
         }
     }

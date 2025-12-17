@@ -31,7 +31,7 @@ public:
         // Clear screen
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, 0, 0, 0);
+                setPixel(canvas,x, y, 0, 0, 0);
             }
         }
 
@@ -57,7 +57,7 @@ public:
                 if (d < radius) {
                     float f = 1.0f - d / radius;
                     auto [r, g, b] = hsvRgb(m_hue + d * 0.005f, settings.brightness * f);
-                    canvas->SetPixel(x, y, r, g, b);
+                    setPixel(canvas,x, y, r, g, b);
                 }
             }
         }
@@ -84,11 +84,11 @@ public:
             for (int dy = -1; dy <= 1; dy++) {
                 int y = cy + offset + dy;
                 if (y >= 0 && y < m_height) {
-                    canvas->SetPixel(x, y, lr, lg, lb);
+                    setPixel(canvas,x, y, lr, lg, lb);
                 }
                 y = cy - offset + dy;
                 if (y >= 0 && y < m_height) {
-                    canvas->SetPixel(x, y, lr, lg, lb);
+                    setPixel(canvas,x, y, lr, lg, lb);
                 }
             }
         }

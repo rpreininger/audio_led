@@ -55,9 +55,9 @@ public:
                 }
 
                 if (useNewColor) {
-                    canvas->SetPixel(x, y, nr, ng, nb);
+                    setPixel(canvas,x, y, nr, ng, nb);
                 } else {
-                    canvas->SetPixel(x, y, pr, pg, pb);
+                    setPixel(canvas,x, y, pr, pg, pb);
                 }
             }
         }

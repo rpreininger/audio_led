@@ -69,6 +69,7 @@ set(SOURCES
     src/lua_effect.cpp
     src/audio_capture.cpp
     src/web_server.cpp
+    src/ft_sender.cpp
     kissfft/kiss_fft.c
     ${LUA_SOURCES}
 )

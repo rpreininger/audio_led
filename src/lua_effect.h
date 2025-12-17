@@ -30,6 +30,9 @@ public:
     // Reload script from file
     bool reload();
 
+    // Get framebuffer for FT sending (linear RGB format)
+    const uint8_t* getFramebuffer() const override { return m_linearBuffer; }
+
 private:
     std::string m_scriptPath;
     std::string m_name;
@@ -39,6 +42,9 @@ private:
 
     // Framebuffer for Lua to write to
     unsigned char m_framebuffer[128][64][3];
+
+    // Linear framebuffer for FT sending (row-major: y * 128 + x) * 3
+    uint8_t m_linearBuffer[128 * 64 * 3];
 
     // Register Lua API functions
     void registerAPI();

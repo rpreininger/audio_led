@@ -46,7 +46,7 @@ public:
         // Clear
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, 0, 0, 0);
+                setPixel(canvas,x, y, 0, 0, 0);
             }
         }
 
@@ -55,7 +55,7 @@ public:
             for (int x = 4; x < 60; x++) {
                 float level = (float)(m_height - y) / m_height;
                 int intensity = (int)(br * (0.5f + level * 0.5f));
-                canvas->SetPixel(x, y, intensity, 0, 0);
+                setPixel(canvas,x, y, intensity, 0, 0);
             }
         }
 
@@ -64,7 +64,7 @@ public:
             for (int x = 68; x < 124; x++) {
                 float level = (float)(m_height - y) / m_height;
                 int intensity = (int)(br * (0.5f + level * 0.5f));
-                canvas->SetPixel(x, y, 0, intensity, 0);
+                setPixel(canvas,x, y, 0, intensity, 0);
             }
         }
 
@@ -72,12 +72,12 @@ public:
         if (peakLy > 0) {
             int y = m_height - peakLy;
             for (int x = 4; x < 60; x++)
-                canvas->SetPixel(x, y, br, br, br);
+                setPixel(canvas,x, y, br, br, br);
         }
         if (peakRy > 0) {
             int y = m_height - peakRy;
             for (int x = 68; x < 124; x++)
-                canvas->SetPixel(x, y, br, br, br);
+                setPixel(canvas,x, y, br, br, br);
         }
     }
 

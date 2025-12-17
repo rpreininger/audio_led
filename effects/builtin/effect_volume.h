@@ -38,7 +38,7 @@ public:
         // Clear screen
         for (int y = 0; y < m_height; y++)
             for (int x = 0; x < m_width; x++)
-                canvas->SetPixel(x, y, 0, 0, 0);
+                setPixel(canvas,x, y, 0, 0, 0);
 
         int h = (int)(vol * 80);
         if (h > m_height) h = m_height;
@@ -88,7 +88,7 @@ private:
             auto [r, g, b] = hsvRgb(m_hue + yf * 0.3f, br);
             for (int x = cx - barWidth; x < cx + barWidth; x++) {
                 if (x >= 0 && x < m_width)
-                    canvas->SetPixel(x, y, r, g, b);
+                    setPixel(canvas,x, y, r, g, b);
             }
         }
     }
@@ -123,7 +123,7 @@ private:
                     float f = 1.0f - dist / (size + 1);
                     if (f < 0.3f) f = 0.3f;
                     auto [r, g, b] = hsvRgb(m_hue + dist * 0.01f, br * f);
-                    canvas->SetPixel(x, y, r, g, b);
+                    setPixel(canvas,x, y, r, g, b);
                 }
             }
         }
@@ -140,7 +140,7 @@ private:
                 if (dist < size) {
                     float f = 1.0f - (float)dist / size;
                     auto [r, g, b] = hsvRgb(m_hue + f * 0.2f, br * f);
-                    canvas->SetPixel(x, y, r, g, b);
+                    setPixel(canvas,x, y, r, g, b);
                 }
             }
         }
@@ -154,8 +154,8 @@ private:
             float yf = (float)y / (barH > 0 ? barH : 1);
             auto [r, g, b] = hsvRgb(m_hue + yf * 0.2f, br * (1.0f - yf * 0.5f));
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, r, g, b);
-                canvas->SetPixel(x, m_height - 1 - y, r, g, b);
+                setPixel(canvas,x, y, r, g, b);
+                setPixel(canvas,x, m_height - 1 - y, r, g, b);
             }
         }
     }
@@ -181,7 +181,7 @@ private:
                     if (d4 < dist) dist = d4;
                     float f = 1.0f - (float)dist / size;
                     auto [r, g, b] = hsvRgb(m_hue + f * 0.3f, br * f);
-                    canvas->SetPixel(x, y, r, g, b);
+                    setPixel(canvas,x, y, r, g, b);
                 }
             }
         }
@@ -201,7 +201,7 @@ private:
                     if (ring % 2 == 0) {
                         float f = 1.0f - dist / maxRad;
                         auto [r, g, b] = hsvRgb(m_hue + ring * 0.15f, br * f);
-                        canvas->SetPixel(x, y, r, g, b);
+                        setPixel(canvas,x, y, r, g, b);
                     }
                 }
             }

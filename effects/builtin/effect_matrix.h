@@ -107,7 +107,7 @@ public:
 
                 // 3-bit pattern: check bits 2,1,0 from left to right
                 if (pattern & (0b100 >> col)) {
-                    canvas->SetPixel(px, py, r, g, b);
+                    setPixel(canvas, px, py, r, g, b);
                 }
             }
         }
@@ -124,7 +124,7 @@ public:
         // Clear canvas
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, 0, 0, 0);
+                setPixel(canvas, x, y, 0, 0, 0);
             }
         }
 

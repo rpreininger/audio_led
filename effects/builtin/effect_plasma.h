@@ -35,7 +35,7 @@ public:
                 int g = static_cast<int>((sin(v * 1.3f + time + vol * 0.5f) * 0.5f + 0.5f) * 255);
                 int b = static_cast<int>((sin(v * 2.3f + time * 0.2f) * 0.5f + 0.5f) * 255);
 
-                canvas->SetPixel(x, y, r, g, b);
+                setPixel(canvas,x, y, r, g, b);
             }
         }
     }

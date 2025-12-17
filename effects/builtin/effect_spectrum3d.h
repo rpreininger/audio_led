@@ -56,7 +56,7 @@ public:
         // Clear screen
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, 0, 0, 0);
+                setPixel(canvas,x, y, 0, 0, 0);
             }
         }
 
@@ -113,7 +113,7 @@ public:
 
                 int py = baseY - h;
                 if (py >= 0 && py < m_height) {
-                    canvas->SetPixel(px, py, r, g, bb);
+                    setPixel(canvas,px, py, r, g, bb);
                 }
             }
         }

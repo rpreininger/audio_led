@@ -73,7 +73,7 @@ public:
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
                 int v = m_fire[y][x];
-                canvas->SetPixel(x, y, v, v / 2, v / 8);
+                setPixel(canvas,x, y, v, v / 2, v / 8);
             }
         }
     }

@@ -43,7 +43,7 @@ public:
         // Clear
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, 0, 0, 0);
+                setPixel(canvas,x, y, 0, 0, 0);
             }
         }
 
@@ -64,7 +64,7 @@ public:
             if (px >= 0 && px < m_width && py >= 0 && py < m_height) {
                 int intensity = (int)(settings.brightness * (10 - m_stars[i][2]) / 10);
                 if (intensity > 255) intensity = 255;
-                canvas->SetPixel((int)px, (int)py, intensity, intensity, intensity);
+                setPixel(canvas,(int)px, (int)py, intensity, intensity, intensity);
             }
         }
     }

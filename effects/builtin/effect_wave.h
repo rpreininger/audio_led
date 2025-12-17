@@ -26,7 +26,7 @@ public:
         // Clear
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, 0, 0, 0);
+                setPixel(canvas,x, y, 0, 0, 0);
             }
         }
 
@@ -77,7 +77,7 @@ public:
                     int r = (int)(br * intensity * rr);
                     int g = (int)(br * intensity * gg);
                     int b = (int)(br * intensity * bb);
-                    canvas->SetPixel(x, y, r, g, b);
+                    setPixel(canvas,x, y, r, g, b);
                 }
             }
         }

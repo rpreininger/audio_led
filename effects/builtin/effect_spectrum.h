@@ -60,10 +60,10 @@ public:
             for (int y = 0; y < m_height; y++) {
                 for (int x = startX; x < endX; x++) {
                     if (y >= m_height - h && h > 0) {
-                        canvas->SetPixel(x, y,
+                        setPixel(canvas, x, y,
                             colors[b][0], colors[b][1], colors[b][2]);
                     } else {
-                        canvas->SetPixel(x, y, 0, 0, 0);
+                        setPixel(canvas, x, y, 0, 0, 0);
                     }
                 }
             }
@@ -71,10 +71,10 @@ public:
             // Black gaps between bars
             for (int y = 0; y < m_height; y++) {
                 for (int x = b * bw; x < startX; x++) {
-                    canvas->SetPixel(x, y, 0, 0, 0);
+                    setPixel(canvas, x, y, 0, 0, 0);
                 }
                 for (int x = endX; x < (b + 1) * bw; x++) {
-                    canvas->SetPixel(x, y, 0, 0, 0);
+                    setPixel(canvas, x, y, 0, 0, 0);
                 }
             }
         }

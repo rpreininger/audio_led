@@ -40,7 +40,7 @@ public:
         // Clear
         for (int y = 0; y < m_height; y++) {
             for (int x = 0; x < m_width; x++) {
-                canvas->SetPixel(x, y, 0, 0, 0);
+                setPixel(canvas,x, y, 0, 0, 0);
             }
         }
 
@@ -61,7 +61,7 @@ public:
                 int py = y - ty;
                 if (py >= 0 && py < m_height) {
                     int intensity = settings.brightness * (5 - ty) / 5;
-                    canvas->SetPixel(x, py, 0, intensity / 2, intensity);
+                    setPixel(canvas,x, py, 0, intensity / 2, intensity);
                 }
             }
         }

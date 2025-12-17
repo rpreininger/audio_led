@@ -21,6 +21,7 @@
 #include "lua_effect.h"
 #include "audio_capture.h"
 #include "web_server.h"
+#include "ft_sender.h"
 
 // Builtin effects
 #include "effect_volume.h"
@@ -56,6 +57,32 @@ static const int FT_HEIGHT = 64;
 static uint8_t ftFramebuffer[FT_WIDTH * FT_HEIGHT * 3] = {0};
 static std::mutex ftMutex;
 static std::atomic<bool> ftHasNewFrame{false};
+
+// Capture buffer for FT sending (captures what's displayed on LED matrix)
+static uint8_t ftSendBuffer[FT_WIDTH * FT_HEIGHT * 3] = {0};
+
+// Helper function to set pixel on canvas and capture to send buffer
+inline void setPixelWithCapture(FrameCanvas* canvas, int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+    canvas->SetPixel(x, y, r, g, b);
+    if (x >= 0 && x < FT_WIDTH && y >= 0 && y < FT_HEIGHT) {
+        int idx = (y * FT_WIDTH + x) * 3;
+        ftSendBuffer[idx] = r;
+        ftSendBuffer[idx + 1] = g;
+        ftSendBuffer[idx + 2] = b;
+    }
+}
+
+// Clear the capture buffer
+inline void clearSendBuffer() {
+    memset(ftSendBuffer, 0, sizeof(ftSendBuffer));
+}
+
+// Copy framebuffer to send buffer (for effects that maintain their own buffer)
+inline void copyToSendBuffer(const uint8_t* src, int width, int height) {
+    if (width == FT_WIDTH && height == FT_HEIGHT) {
+        memcpy(ftSendBuffer, src, FT_WIDTH * FT_HEIGHT * 3);
+    }
+}
 
 // Parse PPM P6 format from UDP packet
 bool parsePPM(const char* data, int len, int& imgWidth, int& imgHeight, int& offsetX, int& offsetY) {
@@ -180,13 +207,17 @@ void ftServerThread() {
     close(sock);
 }
 
-void renderFT(FrameCanvas* canvas) {
+void renderFT(FrameCanvas* canvas, bool captureForSend = false) {
     std::lock_guard<std::mutex> lock(ftMutex);
     for (int y = 0; y < FT_HEIGHT; y++) {
         for (int x = 0; x < FT_WIDTH; x++) {
             int idx = (y * FT_WIDTH + x) * 3;
             canvas->SetPixel(x, y, ftFramebuffer[idx], ftFramebuffer[idx+1], ftFramebuffer[idx+2]);
         }
+    }
+    // Copy to send buffer for forwarding to FT server
+    if (captureForSend) {
+        memcpy(ftSendBuffer, ftFramebuffer, sizeof(ftFramebuffer));
     }
 }
 
@@ -236,11 +267,35 @@ int main(int argc, char* argv[]) {
     const int HEIGHT = 64;
     std::string scriptsDir = "./effects/scripts";
 
+    // FT sender configuration
+    std::string ftHost = "";
+    int ftPort = 1337;
+    bool ftSendEnabled = false;
+    bool ftBroadcast = false;
+
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--scripts" && i + 1 < argc) {
             scriptsDir = argv[++i];
+        } else if (arg == "--ft-host" && i + 1 < argc) {
+            ftHost = argv[++i];
+            ftSendEnabled = true;
+        } else if (arg == "--ft-port" && i + 1 < argc) {
+            ftPort = std::stoi(argv[++i]);
+        } else if (arg == "--ft-broadcast") {
+            ftBroadcast = true;
+            ftSendEnabled = true;
+        } else if (arg == "--help" || arg == "-h") {
+            std::cerr << "Audio LED Visualizer\n"
+                      << "Usage: " << argv[0] << " [options]\n\n"
+                      << "Options:\n"
+                      << "  --scripts <path>   Path to Lua scripts directory (default: ./effects/scripts)\n"
+                      << "  --ft-host <ip>     Enable FT sending to specified host\n"
+                      << "  --ft-broadcast     Enable FT broadcast to all devices on subnet\n"
+                      << "  --ft-port <port>   FT server port (default: 1337)\n"
+                      << "  --help, -h         Show this help message\n";
+            return 0;
         }
     }
 
@@ -333,11 +388,30 @@ int main(int argc, char* argv[]) {
     webServer.start();
 
     // ================================================================
-    // Start Flaschen-Taschen Server
+    // Start Flaschen-Taschen Server (UDP receiver)
     // ================================================================
     std::cerr << "Starting Flaschen-Taschen server..." << std::endl;
     std::thread ftThread(ftServerThread);
     ftThread.detach();
+
+    // ================================================================
+    // Initialize FT Sender (UDP sender to remote FT server)
+    // ================================================================
+    FTSender ftSender;
+    if (ftSendEnabled) {
+        bool initOk = false;
+        if (ftBroadcast) {
+            std::cerr << "Initializing FT sender in broadcast mode..." << std::endl;
+            initOk = ftSender.initBroadcast(ftPort);
+        } else if (!ftHost.empty()) {
+            std::cerr << "Initializing FT sender to " << ftHost << ":" << ftPort << std::endl;
+            initOk = ftSender.init(ftHost, ftPort);
+        }
+        if (!initOk) {
+            std::cerr << "Warning: FT sender initialization failed" << std::endl;
+            ftSendEnabled = false;
+        }
+    }
 
     // ================================================================
     // Main Loop
@@ -362,9 +436,14 @@ int main(int argc, char* argv[]) {
 
         Effect* effect = nullptr;
 
+        // Clear send buffer if FT sending is enabled
+        if (ftSendEnabled) {
+            clearSendBuffer();
+        }
+
         if (ftModeActive) {
             // Flaschen-Taschen mode: render from UDP framebuffer
-            renderFT(canvas);
+            renderFT(canvas, ftSendEnabled);
         } else {
             // Audio visualizer mode
             int manualEffect = settings.currentEffect.load();
@@ -400,7 +479,20 @@ int main(int argc, char* argv[]) {
             effect = effectManager.getEffect(effectId);
             if (effect) {
                 effect->update(canvas, audioData, effectSettings, timeSec);
+
+                // Capture framebuffer for FT sending if effect supports it
+                if (ftSendEnabled) {
+                    const uint8_t* effectBuffer = effect->getFramebuffer();
+                    if (effectBuffer) {
+                        copyToSendBuffer(effectBuffer, WIDTH, HEIGHT);
+                    }
+                }
             }
+        }
+
+        // Send frame to FT server (parallel to LED matrix display)
+        if (ftSendEnabled && ftSender.isEnabled()) {
+            ftSender.send(ftSendBuffer, FT_WIDTH, FT_HEIGHT);
         }
 
         // Swap buffers
