@@ -272,6 +272,7 @@ int main(int argc, char* argv[]) {
     int ftPort = 1337;
     bool ftSendEnabled = false;
     bool ftBroadcast = false;
+    bool ftMulticast = false;
 
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
@@ -286,6 +287,9 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--ft-broadcast") {
             ftBroadcast = true;
             ftSendEnabled = true;
+        } else if (arg == "--ft-multicast") {
+            ftMulticast = true;
+            ftSendEnabled = true;
         } else if (arg == "--help" || arg == "-h") {
             std::cerr << "Audio LED Visualizer\n"
                       << "Usage: " << argv[0] << " [options]\n\n"
@@ -293,6 +297,7 @@ int main(int argc, char* argv[]) {
                       << "  --scripts <path>   Path to Lua scripts directory (default: ./effects/scripts)\n"
                       << "  --ft-host <ip>     Enable FT sending to specified host\n"
                       << "  --ft-broadcast     Enable FT broadcast to all devices on subnet\n"
+                      << "  --ft-multicast     Enable FT multicast (WiFi-friendly, group 239.255.0.1)\n"
                       << "  --ft-port <port>   FT server port (default: 1337)\n"
                       << "  --help, -h         Show this help message\n";
             return 0;
@@ -400,7 +405,10 @@ int main(int argc, char* argv[]) {
     FTSender ftSender;
     if (ftSendEnabled) {
         bool initOk = false;
-        if (ftBroadcast) {
+        if (ftMulticast) {
+            std::cerr << "Initializing FT sender in multicast mode..." << std::endl;
+            initOk = ftSender.initMulticast(ftPort);
+        } else if (ftBroadcast) {
             std::cerr << "Initializing FT sender in broadcast mode..." << std::endl;
             initOk = ftSender.initBroadcast(ftPort);
         } else if (!ftHost.empty()) {

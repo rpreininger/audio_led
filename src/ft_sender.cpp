@@ -154,6 +154,39 @@ std::string FTSender::getBroadcastAddress() {
     return broadcastAddr;
 }
 
+bool FTSender::initMulticast(int port, const std::string& group) {
+    m_host = group;
+    m_port = port;
+
+    // Create UDP socket
+    m_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (m_socket < 0) {
+        std::cerr << "FTSender: Failed to create UDP socket" << std::endl;
+        return false;
+    }
+
+    // Set multicast TTL (1 = local network only)
+    unsigned char ttl = 1;
+    if (setsockopt(m_socket, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) < 0) {
+        std::cerr << "FTSender: Failed to set multicast TTL" << std::endl;
+        close(m_socket);
+        m_socket = -1;
+        return false;
+    }
+
+    // Setup destination address
+    m_destAddr = new struct sockaddr_in;
+    memset(m_destAddr, 0, sizeof(*m_destAddr));
+    m_destAddr->sin_family = AF_INET;
+    m_destAddr->sin_port = htons(port);
+    inet_pton(AF_INET, group.c_str(), &m_destAddr->sin_addr);
+
+    m_enabled.store(true);
+
+    std::cerr << "FTSender: Multicasting to " << group << ":" << port << std::endl;
+    return true;
+}
+
 bool FTSender::initBroadcast(int port) {
     std::string bcastAddr = getBroadcastAddress();
     if (bcastAddr.empty()) {

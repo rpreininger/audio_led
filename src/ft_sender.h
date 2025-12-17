@@ -23,9 +23,16 @@ public:
     // Returns true on success
     bool initBroadcast(int port = 1337);
 
+    // Initialize with multicast address (WiFi-friendly)
+    // Default multicast group: 239.255.0.1
+    bool initMulticast(int port = 1337, const std::string& group = "239.255.0.1");
+
     // Get the subnet broadcast address (e.g., "192.168.1.255")
     // Returns empty string on failure
     static std::string getBroadcastAddress();
+
+    // Default multicast group for FT
+    static constexpr const char* DEFAULT_MULTICAST_GROUP = "239.255.0.1";
 
     // Send a frame to the FT server
     // framebuffer: RGB pixel data (width * height * 3 bytes)
