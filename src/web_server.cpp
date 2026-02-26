@@ -116,6 +116,9 @@ void WebServer::handleClient(int clientSocket) {
         if ((pos = request.find("animspeed=")) != std::string::npos) {
             m_settings.animSpeed.store(atoi(request.c_str() + pos + 10));
         }
+        if ((pos = request.find("inputtype=")) != std::string::npos) {
+            m_settings.inputType.store(atoi(request.c_str() + pos + 10));
+        }
 
         response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSettings updated!";
     }
@@ -142,7 +145,8 @@ void WebServer::handleClient(int clientSocket) {
              << ",\"modespeed\":" << m_settings.modeSpeed.load()
              << ",\"animspeed\":" << m_settings.animSpeed.load()
              << ",\"autoloop\":" << (m_settings.autoLoop.load() ? "true" : "false")
-             << ",\"ftmode\":" << (m_settings.ftMode.load() ? "true" : "false") << "}";
+             << ",\"ftmode\":" << (m_settings.ftMode.load() ? "true" : "false")
+             << ",\"inputtype\":" << m_settings.inputType.load() << "}";
         response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + json.str();
     }
     else {
@@ -225,6 +229,15 @@ std::string WebServer::generateHTML() {
     </div>
 
     <div class="control">
+        <label>Audio Input Type</label>
+        <div class="mode-switch">
+            <button class="mode-btn" id="btnLineIn" onclick="setInputType(0)">Line-In</button>
+            <button class="mode-btn active" id="btnMic" onclick="setInputType(1)">Microphone</button>
+        </div>
+        <div class="ft-info" id="inputInfo">Microphone mode uses 3x gain boost</div>
+    </div>
+
+    <div class="control">
         <label>Sensitivity</label>
         <input type="range" id="sensitivity" min="10" max="500" value="100" oninput="update()">
         <div class="value" id="sensitivityVal">100%</div>
@@ -269,6 +282,7 @@ std::string WebServer::generateHTML() {
 
     <script>
         var currentFtMode = 0;
+        var currentInputType = 1;  // 0 = Line-In, 1 = Microphone
 
         function setMode(mode) {
             currentFtMode = mode;
@@ -276,6 +290,14 @@ std::string WebServer::generateHTML() {
             document.getElementById("btnFT").className = mode == 1 ? "mode-btn active" : "mode-btn";
             document.getElementById("ftInfo").style.display = mode == 1 ? "block" : "none";
             document.getElementById("audioControls").className = mode == 1 ? "audio-controls hidden" : "audio-controls";
+            update();
+        }
+
+        function setInputType(type) {
+            currentInputType = type;
+            document.getElementById("btnLineIn").className = type == 0 ? "mode-btn active" : "mode-btn";
+            document.getElementById("btnMic").className = type == 1 ? "mode-btn active" : "mode-btn";
+            document.getElementById("inputInfo").textContent = type == 1 ? "Microphone mode uses 3x gain boost" : "Line-In mode (no gain boost)";
             update();
         }
 
@@ -300,7 +322,7 @@ std::string WebServer::generateHTML() {
             fetch("/set?effect=" + effect + "&brightness=" + brightness +
                   "&sensitivity=" + sensitivity + "&threshold=" + threshold +
                   "&duration=" + duration + "&modespeed=" + modespeed + "&animspeed=" + animspeed +
-                  "&autoloop=" + autoloop + "&ftmode=" + currentFtMode)
+                  "&autoloop=" + autoloop + "&ftmode=" + currentFtMode + "&inputtype=" + currentInputType)
                 .then(r => r.text())
                 .then(t => document.getElementById("status").textContent = t)
                 .catch(e => document.getElementById("status").textContent = "Error: " + e);
@@ -346,6 +368,7 @@ std::string WebServer::generateHTML() {
                 document.getElementById("animspeedVal").textContent = data.animspeed + "%";
                 document.getElementById("autoloopStatus").textContent = data.autoloop ? "ON" : "OFF";
                 setMode(data.ftmode ? 1 : 0);
+                setInputType(data.inputtype);
             });
     </script>
 </body>

@@ -458,8 +458,14 @@ int main(int argc, char* argv[]) {
             bool autoLoop = settings.autoLoop.load();
             int duration = settings.effectDuration.load();
 
+            // Calculate effective sensitivity based on input type
+            // inputType: 0 = Line-In (1x gain), 1 = Microphone (3x gain boost)
+            float baseSensitivity = settings.sensitivity.load();
+            float inputGain = (settings.inputType.load() == 1) ? 3.0f : 1.0f;
+            float effectiveSensitivity = baseSensitivity * inputGain;
+
             // Update audio sensitivity
-            audio.setSensitivity(settings.sensitivity.load());
+            audio.setSensitivity(effectiveSensitivity);
 
             // Get audio data
             AudioData audioData = audio.getAudioData();
@@ -467,7 +473,7 @@ int main(int argc, char* argv[]) {
             // Build effect settings
             EffectSettings effectSettings;
             effectSettings.brightness = brightness;
-            effectSettings.sensitivity = settings.sensitivity.load();
+            effectSettings.sensitivity = effectiveSensitivity;
             effectSettings.noiseThreshold = settings.noiseThreshold.load();
 
             // Choose effect

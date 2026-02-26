@@ -16,9 +16,10 @@ struct WebSettings {
     std::atomic<int> effectDuration{5};
     std::atomic<int> currentEffect{-1};  // -1 = auto
     std::atomic<bool> autoLoop{true};
-    std::atomic<bool> ftMode{false};     // false = audio visualizer, true = Flaschen-Taschen
+    std::atomic<bool> ftMode{true};      // false = audio visualizer, true = Flaschen-Taschen
     std::atomic<int> modeSpeed{4};       // seconds between Volume Bars mode changes
     std::atomic<int> animSpeed{100};     // animation speed percentage (10-200%)
+    std::atomic<int> inputType{1};       // 0 = Line-In, 1 = Microphone (different gain levels)
 };
 
 class WebServer {
