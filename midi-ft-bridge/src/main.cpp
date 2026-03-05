@@ -2,6 +2,9 @@
 //  midi-ft-bridge
 //  Receives USB MIDI events from Roland Fantom 06 and streams
 //  mapped MP4 video clips to Flaschen-Taschen LED panels over WiFi
+//
+//  A single video (e.g. 256x128) is decoded once per frame.
+//  Each panel receives a cropped region defined by src_x/y/w/h.
 // ====================================================================
 
 #include "config.h"
@@ -32,13 +35,24 @@ static void signalHandler(int sig) {
     g_running = false;
 }
 
-// Active clip playback state per panel
+// Shared clip playback state (one video feeds all panels)
 struct ActiveClip {
     std::unique_ptr<VideoPlayer> player;
     std::string clipName;
     double fps;
     std::chrono::steady_clock::time_point lastFrameTime;
 };
+
+// Extract a sub-rectangle from an RGB24 frame into a contiguous buffer
+static void extractRegion(const uint8_t* src, int srcWidth,
+                          int sx, int sy, int sw, int sh,
+                          uint8_t* dst) {
+    for (int row = 0; row < sh; row++) {
+        memcpy(dst + row * sw * 3,
+               src + (sy + row) * srcWidth * 3 + sx * 3,
+               sw * 3);
+    }
+}
 
 static void printUsage(const char* prog) {
     std::cerr << "Usage: " << prog << " [options]\n"
@@ -149,8 +163,14 @@ int main(int argc, char* argv[]) {
         noteMappings[config.mappings[i].note] = (int)i;
     }
 
-    // Active clips per panel (key: panel index)
-    std::map<int, ActiveClip> activeClips;
+    // Single shared active clip (one video feeds all panels)
+    std::unique_ptr<ActiveClip> activeClip;
+
+    // Pre-allocate region extraction buffers (one per panel)
+    std::vector<std::vector<uint8_t>> regionBuffers;
+    for (const auto& panel : config.panels) {
+        regionBuffers.emplace_back(panel.src_w * panel.src_h * 3, 0);
+    }
 
     // Start MIDI input
     MidiInput midiInput;
@@ -194,38 +214,22 @@ int main(int argc, char* argv[]) {
 
     std::cerr << "midi-ft-bridge running. Press Ctrl+C to stop." << std::endl;
 
-    // Pre-allocate a black frame for clearing panels
-    std::vector<uint8_t> blackFrame(config.width * config.height * 3, 0);
-
     // Helper: trigger a clip by mapping index
-    std::function<void(int, std::chrono::steady_clock::time_point)> triggerMapping;
-    triggerMapping = [&](int mappingIdx, std::chrono::steady_clock::time_point now) {
+    auto triggerMapping = [&](int mappingIdx, std::chrono::steady_clock::time_point now) {
         if (mappingIdx < 0 || mappingIdx >= (int)config.mappings.size()) return;
         const auto& mapping = config.mappings[mappingIdx];
         std::string clipPath = config.clips_dir + "/" + mapping.clip;
 
-        auto startClip = [&](int panelIdx) {
-            auto player = std::make_unique<VideoPlayer>();
-            if (player->open(clipPath, config.width, config.height)) {
-                ActiveClip ac;
-                ac.player = std::move(player);
-                ac.clipName = mapping.clip;
-                ac.fps = ac.player->getFPS();
-                if (ac.fps <= 0) ac.fps = config.default_fps;
-                ac.lastFrameTime = now;
-                activeClips[panelIdx] = std::move(ac);
-                std::cerr << "Playing " << mapping.clip << " on panel "
-                          << config.panels[panelIdx].name << std::endl;
-            }
-        };
-
-        if (mapping.panel == "all") {
-            for (size_t i = 0; i < config.panels.size(); i++) {
-                startClip((int)i);
-            }
-        } else {
-            int idx = config.findPanel(mapping.panel);
-            if (idx >= 0) startClip(idx);
+        auto player = std::make_unique<VideoPlayer>();
+        if (player->open(clipPath, config.video_width, config.video_height)) {
+            auto ac = std::make_unique<ActiveClip>();
+            ac->player = std::move(player);
+            ac->clipName = mapping.clip;
+            ac->fps = ac->player->getFPS();
+            if (ac->fps <= 0) ac->fps = config.default_fps;
+            ac->lastFrameTime = now;
+            activeClip = std::move(ac);
+            std::cerr << "Playing " << mapping.clip << " on all panels" << std::endl;
         }
     };
 
@@ -271,34 +275,34 @@ int main(int argc, char* argv[]) {
             triggerMapping(it->second, now);
         }
 
-        // Update active clips: decode next frame and send to panels
-        std::vector<int> finishedPanels;
+        // Update active clip: decode one frame, extract regions, send to all panels
+        if (activeClip) {
+            double frameInterval = 1.0 / activeClip->fps;
+            auto elapsed = std::chrono::duration<double>(now - activeClip->lastFrameTime).count();
 
-        for (auto& [panelIdx, clip] : activeClips) {
-            double frameInterval = 1.0 / clip.fps;
-            auto elapsed = std::chrono::duration<double>(now - clip.lastFrameTime).count();
+            if (elapsed >= frameInterval) {
+                activeClip->lastFrameTime = now;
 
-            if (elapsed < frameInterval) continue;
-
-            clip.lastFrameTime = now;
-
-            const uint8_t* frame = clip.player->nextFrame();
-            if (frame) {
-                if (panelIdx >= 0 && panelIdx < (int)senders.size()) {
-                    senders[panelIdx]->send(frame, config.width, config.height);
+                const uint8_t* frame = activeClip->player->nextFrame();
+                if (frame) {
+                    // Extract each panel's region and send
+                    for (size_t i = 0; i < config.panels.size() && i < senders.size(); i++) {
+                        const auto& panel = config.panels[i];
+                        extractRegion(frame, config.video_width,
+                                      panel.src_x, panel.src_y,
+                                      panel.src_w, panel.src_h,
+                                      regionBuffers[i].data());
+                        senders[i]->send(regionBuffers[i].data(), panel.src_w, panel.src_h);
+                    }
+                } else {
+                    // Clip finished - send black frame to each panel and clear
+                    for (size_t i = 0; i < config.panels.size() && i < senders.size(); i++) {
+                        senders[i]->sendBlack(config.panels[i].src_w, config.panels[i].src_h);
+                    }
+                    std::cerr << "Clip finished: " << activeClip->clipName << std::endl;
+                    activeClip.reset();
                 }
-            } else {
-                // Clip finished - send black frame and mark for removal
-                if (panelIdx >= 0 && panelIdx < (int)senders.size()) {
-                    senders[panelIdx]->send(blackFrame.data(), config.width, config.height);
-                }
-                finishedPanels.push_back(panelIdx);
             }
-        }
-
-        for (int idx : finishedPanels) {
-            std::cerr << "Clip finished on panel " << config.panels[idx].name << std::endl;
-            activeClips.erase(idx);
         }
 
         // Update status server with panel info
@@ -311,10 +315,7 @@ int main(int argc, char* argv[]) {
             ps.framesSent = (i < senders.size()) ? senders[i]->getFramesSent() : 0;
             ps.bytesSent = (i < senders.size()) ? senders[i]->getBytesSent() : 0;
             ps.enabled = (i < senders.size()) ? senders[i]->isEnabled() : false;
-
-            auto it = activeClips.find((int)i);
-            ps.activeClip = (it != activeClips.end()) ? it->second.clipName : "";
-
+            ps.activeClip = activeClip ? activeClip->clipName : "";
             panelStatus.push_back(ps);
         }
         statusServer.updatePanelStatus(panelStatus);
@@ -337,8 +338,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Send black to all panels
-    for (size_t i = 0; i < senders.size(); i++) {
-        senders[i]->send(blackFrame.data(), config.width, config.height);
+    for (size_t i = 0; i < senders.size() && i < config.panels.size(); i++) {
+        senders[i]->sendBlack(config.panels[i].src_w, config.panels[i].src_h);
     }
 
     statusServer.stop();

@@ -1,6 +1,8 @@
 {
   "panels": [
-    { "name": "A", "ip": "192.168.10.20", "port": 1337 }
+    { "name": "A", "ip": "192.168.10.20", "port": 1337, "src_x": 0, "src_y": 0, "src_w": 128, "src_h": 128 },
+    { "name": "B", "ip": "192.168.10.21", "port": 1337, "src_x": 128, "src_y": 0, "src_w": 128, "src_h": 64 },
+    { "name": "C", "ip": "192.168.10.22", "port": 1337, "src_x": 128, "src_y": 64, "src_w": 128, "src_h": 64 }
   ],
   "clips_dir": "./clips",
   "midi_channel": 9,
@@ -19,7 +21,7 @@
     { "note": 47, "panel": "all", "clip": "AXEL START.mp4" }
   ],
   "default_fps": 25,
-  "width": 128,
-  "height": 64,
+  "video_width": 256,
+  "video_height": 128,
   "web_port": 8080
 }

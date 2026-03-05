@@ -14,6 +14,10 @@ struct PanelConfig {
     std::string name;
     std::string ip;
     int port = 1337;
+    int src_x = 0;   // Source region X offset in decoded frame
+    int src_y = 0;   // Source region Y offset in decoded frame
+    int src_w = 0;   // Source region width (0 = use video_width)
+    int src_h = 0;   // Source region height (0 = use video_height)
 };
 
 struct MappingConfig {
@@ -27,8 +31,8 @@ struct Config {
     std::string clips_dir = "./clips";
     std::vector<MappingConfig> mappings;
     int default_fps = 25;
-    int width = 128;
-    int height = 64;
+    int video_width = 256;
+    int video_height = 128;
     int web_port = 8080;
     int midi_channel = -1;  // MIDI channel filter (0-15, -1 = any). Channel 10 = 9 (0-indexed)
 
@@ -64,6 +68,10 @@ struct Config {
                     panel.name = extractString(obj, "name");
                     panel.ip = extractString(obj, "ip");
                     panel.port = extractInt(obj, "port", 1337);
+                    panel.src_x = extractInt(obj, "src_x", 0);
+                    panel.src_y = extractInt(obj, "src_y", 0);
+                    panel.src_w = extractInt(obj, "src_w", 0);
+                    panel.src_h = extractInt(obj, "src_h", 0);
                     panels.push_back(panel);
 
                     pos = objEnd + 1;
@@ -102,10 +110,16 @@ struct Config {
         if (clips_dir.empty()) clips_dir = "./clips";
 
         default_fps = extractInt(json, "default_fps", 25);
-        width = extractInt(json, "width", 128);
-        height = extractInt(json, "height", 64);
+        video_width = extractInt(json, "video_width", 256);
+        video_height = extractInt(json, "video_height", 128);
         web_port = extractInt(json, "web_port", 8080);
         midi_channel = extractInt(json, "midi_channel", -1);
+
+        // Default panel src_w/src_h to full video dimensions if not set
+        for (auto& panel : panels) {
+            if (panel.src_w <= 0) panel.src_w = video_width;
+            if (panel.src_h <= 0) panel.src_h = video_height;
+        }
 
         std::cerr << "Config: Loaded " << panels.size() << " panels, "
                   << mappings.size() << " mappings";
